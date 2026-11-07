@@ -16,6 +16,7 @@ __pycache__/
 /dist/
 *.log
 
-# Keep the selected brand source. Other designs and screenshots stay local.
+# Keep the approved branding. Exploratory designs stay local.
 /branding/*
 !/branding/frame-stack.svg
+!/branding/sortrr-lockup.svg

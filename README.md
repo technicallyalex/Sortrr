@@ -1,4 +1,4 @@
-# Sortrr
+# ![Sortrr](branding/sortrr-lockup.svg)
 
 Sortrr identifies movies and TV episodes and organizes them for Plex, Jellyfin, and Emby. It runs locally on Windows.
 
@@ -25,5 +25,18 @@ Sortrr identifies movies and TV episodes and organizes them for Plex, Jellyfin, 
 3. In **Review files**, check matches and resolve uncertain results.
 4. In **Organize**, choose copy or move and a media server preset. Preview the plan before applying it.
 5. Point your media server at the resulting **Movies** and **TV Shows** folders as separate libraries.
+
+## Screenshots
+
+![Review files in dark mode, showing identified movies and TV episodes with thumbnails and match status](docs/screenshots/review-files.png)
+
+<details>
+<summary>Organize and Change history</summary>
+
+![Organize in light mode, showing the destination, folder naming preset, and file selection](docs/screenshots/organize.png)
+
+![Change history search showing a file's original path, latest path, and Restore original button](docs/screenshots/change-history.png)
+
+</details>
 
 This product uses the TMDb API but is not endorsed or certified by TMDb. TV data comes from [TVmaze](https://www.tvmaze.com/api) under [CC BY-SA](https://creativecommons.org/licenses/by-sa/4.0/).

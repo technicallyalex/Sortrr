@@ -1,0 +1,21 @@
+# Local settings, credentials, and operation history
+/data/
+tmdb-token.txt
+.env
+.env.*
+
+# Python environment and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated packages and logs
+/build/
+/dist/
+*.log
+
+# Keep the selected brand source. Other designs and screenshots stay local.
+/branding/*
+!/branding/frame-stack.svg

@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import related_media
 import errno, threading, tempfile, math
 from concurrent.futures import ThreadPoolExecutor, Future, wait, FIRST_COMPLETED
 from email.utils import parsedate_to_datetime
@@ -38,6 +39,7 @@ class Media:
     alternate_queries: list=field(default_factory=list)
     organized_path: Path|None=None
     runtime_check: dict=field(default_factory=dict)
+    extras: list=field(default_factory=list)
     @property
     def kind(self): return 'TV' if self.season is not None else 'Movie'
 def parse(p):
@@ -66,6 +68,7 @@ class History:
             db.execute('PRAGMA journal_mode=WAL')
             db.execute('CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, size INTEGER, mtime INTEGER, payload TEXT, provider TEXT, saved REAL)')
             db.execute('CREATE TABLE IF NOT EXISTS outputs (source TEXT, library TEXT, mode TEXT, inputs TEXT, targets TEXT, PRIMARY KEY(source,library,mode))')
+            db.execute('CREATE TABLE IF NOT EXISTS related (path TEXT PRIMARY KEY, signature TEXT, owner TEXT, category TEXT)')
     @contextmanager
     def connect(self):
         db=sqlite3.connect(self.path, timeout=15)
@@ -100,7 +103,8 @@ class History:
         for key,value in data.items(): setattr(m,key,value)
         m.cached=True
         if m.chosen and library:
-            if self.key(m.source)==self.key(destination(m,library,options)): m.status='Already organized'
+            if self.key(m.source)==self.key(destination(m,library,options)):
+                m.status='Ready' if related_media.needs_sort(m,destination(m,library,options),options or SortOptions()) else 'Already organized'
             elif self.processed(m,library,mode,options): m.status='Previously copied' if mode=='copy' else 'Previously moved'
         return True
     @staticmethod
@@ -124,17 +128,59 @@ class History:
             row=db.execute('SELECT inputs,targets FROM outputs WHERE source=? AND library=? AND mode=?',(self.key(m.source),self.key(library),self.operation_mode(m,mode,options))).fetchone()
         if not row: return False
         try:
-            pairs=companions(m,destination(m,library,options),include_assets=(options or SortOptions()).rename_files)
+            pairs=companions(m,destination(m,library,options),include_assets=(options or SortOptions()).rename_files,options=options)
             inputs=self.snapshot([src for src,dst in pairs])
             targets=json.loads(row[1])
             if [self.key(dst) for src,dst in pairs] != [t[0] for t in targets]: return False
             return json.loads(json.dumps(inputs))==json.loads(row[0]) and json.loads(json.dumps(self.snapshot([Path(t[0]) for t in targets])))==targets
         except OSError: return False
 
+    def save_related(self,extra):
+        with self.connect() as db:
+            db.execute('INSERT OR REPLACE INTO related VALUES (?,?,?,?)',
+                       (self.key(extra['path']),json.dumps(extra['signature']),extra['owner'],extra['category']))
+
+    def restore_related(self,media,extras):
+        owners={str(m.source) for m in media}
+        with self.connect() as db:
+            choices={path:(signature,owner,category) for path,signature,owner,category
+                     in db.execute('SELECT path,signature,owner,category FROM related')}
+        for extra in extras:
+            choice=choices.get(self.key(extra['path']))
+            if not choice:
+                continue
+            signature,owner,category=choice
+            if (json.loads(signature)==extra['signature'] and (not owner or owner in owners)
+                    and category in related_media.EXTRA_TYPES):
+                extra.update(owner=owner,category=category,reason='Saved association')
+        related_media.attach(media,extras)
+
+    def unchanged_copies(self,m,library,options,pairs):
+        """Reuse only copies from this source's saved manifest when adding bonuses."""
+        with self.connect() as db:
+            row=db.execute('SELECT inputs,targets FROM outputs WHERE source=? AND library=? AND mode=?',
+                           (self.key(m.source),self.key(library),self.operation_mode(m,'copy',options))).fetchone()
+        if not row:
+            return set()
+        recorded={target[0]:(source,target) for source,target in zip(json.loads(row[0]),json.loads(row[1]))}
+        reusable=set()
+        for source,target in pairs:
+            expected=recorded.get(self.key(target))
+            if not expected or not target.is_file() or is_link(target):
+                continue
+            try:
+                if (json.loads(json.dumps(self.snapshot([source,target]))) == list(expected)
+                        and digest(source)==digest(target)):
+                    reusable.add(self.key(target))
+            except OSError:
+                continue
+        return reusable
+
     def clear(self):
         with self.connect() as db:
             db.execute('DELETE FROM files')
             db.execute('DELETE FROM outputs')
+            db.execute('DELETE FROM related')
     def forget(self,paths):
         # Invalidate original/organized aliases together without touching unrelated media.
         keys={self.key(p) for p in paths}
@@ -542,7 +588,7 @@ def digest(p):
     with p.open('rb') as f:
         for b in iter(lambda:f.read(4194304),b''): h.update(b)
     return h.hexdigest()
-def companions(m,target,include_assets=False):
+def companions(m,target,include_assets=False,include_extras=True,options=None):
     pairs=[(m.source,target)]
     extensions={'.srt','.ass','.ssa','.vtt','.sub','.idx'}
     if include_assets: extensions.update({'.nfo','.jpg','.jpeg','.png','.webp','.tbn'})
@@ -555,6 +601,10 @@ def companions(m,target,include_assets=False):
         if match:
             suffix=p.name[len(m.source.stem):]
             pairs.append((p,target.with_name(target.stem+suffix)))
+    if include_extras:
+        for source, destination_path in related_media.targets(m, target, options or SortOptions()):
+            extra_media = replace(m, source=source, extras=[])
+            pairs.extend(companions(extra_media, destination_path, include_assets, False))
     return pairs
 
 def move_no_replace(src, dst):
@@ -582,19 +632,42 @@ def organize(items,library,report=lambda s:None,mode='copy',options=None,journal
                 if mode=='rename':
                     source_boundary(m.source,m.source.parent.resolve())
                     target=m.source.with_name(target.name)
-                if m.source.resolve() == target.resolve():
+                if m.source.resolve() == target.resolve() and (mode == 'rename' or not related_media.needs_sort(m,target,options)):
                     m.organized_path=target
                     m.status = 'Already organized'
                     report(m.status)
                     continue
-                pairs=companions(m,target,include_assets=mode=='rename' or bool(options and options.rename_files))
+                pairs=companions(m,target,include_assets=mode=='rename' or options.rename_files,
+                                 include_extras=mode!='rename',options=options)
+                for extra in m.extras if mode != 'rename' else []:
+                    extra_path = Path(extra['path'])
+                    before_extra = extra_path.stat()
+                    if [before_extra.st_size,before_extra.st_mtime_ns] != extra['signature']:
+                        raise ValueError('Related media changed; scan again')
+                    source_boundary(extra_path, extra_path.anchor)
+                planned_targets=[os.path.normcase(str(dst.resolve())) for src,dst in pairs]
+                if len(set(planned_targets)) != len(planned_targets):
+                    raise ValueError('Related media has conflicting destination names')
+                reusable=history.unchanged_copies(m,library,options,pairs) if mode=='copy' and m.extras else set()
+                if all(src.resolve()==dst.resolve() or history.key(dst) in reusable for src,dst in pairs):
+                    m.organized_path=target
+                    m.status='Already organized'
+                    report(m.status)
+                    continue
                 for src,dst in pairs:
+                    if src.resolve()==dst.resolve() or history.key(dst) in reusable: continue
                     if src.is_symlink(): raise ValueError('Symbolic links skipped')
                     if dst.exists() or dst.is_symlink(): raise FileExistsError('Destination already exists')
                     if not dst.resolve().is_relative_to(m.source.parent.resolve() if mode=='rename' else Path(library).resolve()): raise ValueError('Unsafe destination')
                 inputs=history.snapshot([src for src,dst in pairs])
                 history.save(m)
+                signatures={path:(size,mtime) for path,size,mtime in inputs}
                 for src,dst in pairs:
+                    if src.resolve()==dst.resolve() or history.key(dst) in reusable: continue
+                    source_boundary(src,Path(src.anchor))
+                    current=src.stat()
+                    if (current.st_size,current.st_mtime_ns)!=signatures[history.key(src)]:
+                        raise ValueError('File changed during organization; scan again')
                     dst.parent.mkdir(parents=True,exist_ok=True)
                     rec={'source':str(src.resolve()),'target':str(dst.resolve()),'event':'intent','mode':mode}
                     if mode=='rename': rec['root']=str(m.source.parent.resolve())
@@ -624,6 +697,13 @@ def organize(items,library,report=lambda s:None,mode='copy',options=None,journal
                         if created: dst.unlink(missing_ok=True)
                         raise
                 history.completed(m,library,mode,inputs,pairs,options)
+                if mode in {'move','rename'}:
+                    destinations = dict(related_media.targets(m,target,options))
+                    for extra in m.extras:
+                        new_path = destinations[Path(extra['path'])] if mode == 'move' else Path(extra['path'])
+                        stat = new_path.stat()
+                        extra.update(path=str(new_path),owner=str(m.source),
+                                     signature=[stat.st_size,stat.st_mtime_ns])
                 m.organized_path=target
                 m.status='Renamed' if mode=='rename' else ('Moved' if mode=='move' else 'Copied'); count+=1
             except Exception as ex: m.status='Skipped: '+str(ex)
@@ -947,7 +1027,7 @@ def plan_renames(items,options=None):
             st=m.source.stat()
             if (st.st_size,st.st_mtime_ns)!=m.signature: raise ValueError('Source changed; scan again')
             target=m.source.with_name(destination(m,m.source.parent,options).name)
-            for src,dst in companions(m,target,include_assets=True):
+            for src,dst in companions(m,target,include_assets=True,include_extras=False):
                 if src.resolve()==dst.resolve(): error='Already named correctly'
                 elif is_link(src): error='Links are skipped'
                 elif dst.exists() or dst.is_symlink() or History.key(dst) in targets: error='Destination already exists or conflicts'
@@ -1026,6 +1106,7 @@ def plan_cleanup(source,excluded=()):
         for name in names:
             path=parent/name
             if is_link(path) or protected_path(path): continue
+            if related_media.context(path,root): continue
             category=cleanup_category(path)
             if category:
                 st=path.stat()
@@ -1174,6 +1255,7 @@ def sort_and_finish(items,library,source,mode='copy',options=None,auto_cleanup=F
     options=options or SortOptions(); items=list(items)
     root=Path(source).resolve(); output=Path(library).resolve()
     original={id(m):m.source.resolve() for m in items}
+    original_extras={id(m):[Path(e['path']).resolve() for e in m.extras] for m in items}
     plan=None; warnings=[]
     if auto_cleanup:
         excluded=[output] if output!=root else [root/'Movies',root/'TV Shows']
@@ -1186,6 +1268,9 @@ def sort_and_finish(items,library,source,mode='copy',options=None,auto_cleanup=F
     if plan is not None:
         successful={original[id(m)] for m in items if m.status in {'Copied','Moved','Already organized'}}
         failed={original[id(m)].parent for m in items if m.status not in {'Copied','Moved','Already organized'}}
+        for m in items:
+            if m.status in {'Copied','Moved','Already organized'}:
+                successful.update(original_extras[id(m)])
         eligible=set()
         for folder in {p.parent for p in successful}-failed:
             if folder not in plan.contents: continue

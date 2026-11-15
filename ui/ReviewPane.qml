@@ -139,6 +139,7 @@ ColumnLayout {
                 delegate: Item {
                     id: itemRow
                     required property int uid
+                    required property int relatedCount
                     required property string mediaTitle
                     required property string fileName
                     required property string filePath
@@ -196,6 +197,11 @@ ColumnLayout {
                                 HoverHandler { id: nameHover }
                                 ToolTip.visible: nameHover.hovered && truncated
                                 ToolTip.text: itemRow.fileName
+                            }
+                            Label {
+                                visible: itemRow.relatedCount > 0
+                                text: itemRow.relatedCount + (itemRow.relatedCount === 1 ? " bonus video" : " bonus videos")
+                                color: Theme.accentInk; font.pixelSize: 11
                             }
                         }
                         Label {

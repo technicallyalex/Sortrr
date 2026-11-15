@@ -9,6 +9,7 @@ from PySide6.QtGui import QDesktopServices,QGuiApplication,QImage
 from PySide6.QtWidgets import QFileDialog
 from PySide6.QtMultimedia import QMediaPlayer,QAudioOutput,QMediaMetaData,QAudioDevice,QMediaDevices
 import core
+import related_media
 from previews import PreviewManager,timestamp
 log=logging.getLogger('sortrr')
 class ArtworkCache:
@@ -41,7 +42,7 @@ def saved_runtime(m):
     return m.runtime_check if m.chosen and m.runtime_check.get('key')==runtime_key(m.chosen,m.kind,m.season,m.episode) else {}
 
 class MediaModel(QAbstractListModel):
-    names=['uid','mediaTitle','fileName','filePath','mediaKind','releaseYear','seasonText','episodeText','statusText','statusTone','thumbnail','isSelected','isRemembered','runtimeStatus','runtimeLabel']
+    names=['uid','mediaTitle','fileName','filePath','mediaKind','releaseYear','seasonText','episodeText','statusText','statusTone','thumbnail','isSelected','isRemembered','runtimeStatus','runtimeLabel','relatedCount']
     def __init__(self,c): super().__init__(c); self.c=c
     def roleNames(self): return {int(Qt.ItemDataRole.UserRole)+i+1:name.encode() for i,name in enumerate(self.names)}
     def rowCount(self,parent=QModelIndex()): return 0 if parent.isValid() else len(self.c.items)
@@ -83,6 +84,7 @@ class Controller(QObject):
     invoke=Signal(object); stateChanged=Signal(); wizardChanged=Signal(); playbackChanged=Signal()
     darkModeChanged = Signal()
     changeHistoryChanged = Signal()
+    relatedMediaChanged = Signal()
     audioOutputsChanged=Signal()
     progressResumed=Signal(str,str,str)
     scanStarted=Signal(); dialogRequested=Signal('QVariantMap'); toast=Signal(str); hoverReady=Signal(int,int,str,str)
@@ -91,6 +93,7 @@ class Controller(QObject):
         self.items=[]; self.selected=set(); self.thumbs={}; self.thumb_requested=set(); self.busy=False; self.mutating=False; self.status='Choose a source folder to begin.'
         self.source=''; self.destination=''; self.reject_folder=''; self.in_place=False; self.options=core.SortOptions(); self.auto_cleanup=False; self.sort_by='Source name'; self.descending=False
         self.catalog=core.Catalog(); self.pending=None; self.last_sort=''; self.epoch=0; self.closed=False
+        self.related = []
         self.change_runs = {}
         self.file_trails = {}
         self.change_errors = {}
@@ -159,6 +162,7 @@ class Controller(QObject):
             'canRecycle': QFile.supportsMoveToTrash(),
             'autoRename': self.options.rename_files, 'autoCleanup': self.auto_cleanup,
             'busy': self.busy, 'mutating': self.mutating, 'status': self.status,
+            'relatedCount': len(self.related),
             'total': len(self.items), 'ready': sum(m.status == 'Ready' for m in self.items),
             'unresolved': len(core.unresolved_media(self.items)),
             'visible': len(visible), 'visibleReady': sum(m.status == 'Ready' for m in visible),
@@ -229,7 +233,7 @@ class Controller(QObject):
     def row(self,uid):
         m=self.items[uid]; c=m.chosen or {}; status=m.status
         tone='good' if status=='Ready' else ('done' if status in {'Copied','Moved','Renamed','Already organized','Previously copied','Previously moved',core.REJECT_MOVED,core.REJECT_RECYCLED} else ('muted' if status=='Skipped by you' else ('error' if status.startswith('Lookup failed') or status=='Connect TMDb' else 'review')))
-        return dict(uid=uid,mediaTitle=c.get('title',m.query),fileName=self.actual(m).name,filePath=str(self.actual(m)),mediaKind=m.kind,releaseYear=c.get('year',m.year),seasonText=str(m.season) if m.season is not None else '',episodeText=f'S{m.season:02d}E{m.episode:02d}' if m.season is not None and m.episode is not None else '',statusText=status,statusTone=tone,thumbnail=self.thumbs.get(uid,''),isSelected=uid in self.selected,isRemembered=m.cached,runtimeStatus=saved_runtime(m).get('status','Unchecked'),runtimeLabel=saved_runtime(m).get('label','Runtime not checked'))
+        return dict(relatedCount=len(m.extras),uid=uid,mediaTitle=c.get('title',m.query),fileName=self.actual(m).name,filePath=str(self.actual(m)),mediaKind=m.kind,releaseYear=c.get('year',m.year),seasonText=str(m.season) if m.season is not None else '',episodeText=f'S{m.season:02d}E{m.episode:02d}' if m.season is not None and m.episode is not None else '',statusText=status,statusTone=tone,thumbnail=self.thumbs.get(uid,''),isSelected=uid in self.selected,isRemembered=m.cached,runtimeStatus=saved_runtime(m).get('status','Unchecked'),runtimeLabel=saved_runtime(m).get('label','Runtime not checked'))
     def visible_ids(self): return [self.proxy.mapToSource(self.proxy.index(i,0)).row() for i in range(self.proxy.rowCount())]
     def selected_visible(self): return [i for i in self.visible_ids() if i in self.selected]
     def load_settings(self):
@@ -276,7 +280,10 @@ class Controller(QObject):
             return False
         checkpoint = {
             'version': 1, 'source': self.source, 'stage': stage,
-            'rows': rows, 'selected': sorted(self.selected),
+            'rows': rows, 'related': [
+                dict(extra,owner=next((str(self.actual(m)) for m in self.items if str(m.source)==extra['owner']),extra['owner']))
+                for extra in self.related
+            ], 'selected': sorted(self.selected),
             'view': {'query': self.proxy.query, 'kind': self.proxy.kind, 'runtime': self.proxy.runtime,
                      'tab': 'review' if self.proxy.review else 'ready' if self.proxy.ready_only
                      else 'rejected' if self.proxy.rejected_only else 'all',
@@ -363,10 +370,21 @@ class Controller(QObject):
                     continue
                 remap[old_uid] = len(items)
                 items.append(media)
-            return items, remap
+            related = []
+            for extra in checkpoint.get('related', []):
+                try:
+                    path = core.source_boundary(Path(extra['path']),source)
+                    stat = path.stat()
+                    if (path.suffix.lower() in core.VIDEO and extra['category'] in related_media.EXTRA_TYPES
+                            and [stat.st_size,stat.st_mtime_ns] == extra['signature']):
+                        related.append(dict(extra))
+                except (OSError,ValueError,KeyError,TypeError):
+                    continue
+            related_media.attach(items,related)
+            return items, remap, related
 
         def resume(result):
-            items, remap = result
+            items, remap, related = result
             self.source = checkpoint['source']
             self.destination = destination
             self.in_place = in_place
@@ -379,6 +397,8 @@ class Controller(QObject):
             self.thumb_requested.clear()
             self.selected = {remap[i] for i in checkpoint.get('selected', []) if i in remap}
             self.model.reset(items)
+            self.recheck()
+            self.set_related(related)
             self.scanStarted.emit()
             self.proxy.query = view.get('query', '')
             self.proxy.kind = view.get('kind', 'All media')
@@ -460,6 +480,7 @@ class Controller(QObject):
         if field=='source':
             if self.source!=value:
                 self.source=value; self.epoch+=1; self.selected.clear(); self.thumbs.clear(); self.thumb_requested.clear(); self.model.reset()
+                self.set_related([])
                 self.status='Source changed. Scan to identify files.'; self.last_sort=''
         elif field == 'reject':
             self.reject_folder = value
@@ -521,6 +542,7 @@ class Controller(QObject):
             self.model.changed(uid)
         self.notify()
     def all_changed(self):
+        self.relatedMediaChanged.emit()
         if self.items: self.model.dataChanged.emit(self.model.index(0),self.model.index(len(self.items)-1),list(self.model.roleNames()))
     @Slot()
     def scan(self):
@@ -536,29 +558,74 @@ class Controller(QObject):
         reject_folder = Path(self.reject_folder).expanduser().resolve() if self.reject_folder else None
         excluded = [path for path in (dest if not self.in_place else None, reject_folder)
                     if path and path != src and path.is_relative_to(src)]
-        self.save(); self.epoch+=1; self.selected.clear(); self.thumbs.clear(); self.thumb_requested.clear(); self.model.reset(); options=self.options; mode='move' if self.in_place else 'copy'; self.status='Discovering and identifying files...'; self.last_sort=''
+        self.save(); self.epoch+=1; self.selected.clear(); self.thumbs.clear(); self.thumb_requested.clear(); self.model.reset(); self.set_related([]); options=self.options; mode='move' if self.in_place else 'copy'; self.status='Discovering and identifying files...'; self.last_sort=''
         def append(m): self.model.append(m); self.notify()
-        def changed(uid,m): self.model.changed(uid); self.status='Scanned '+m.source.name; self.notify()
+        def changed(uid,m): self.model.changed(uid); self.relatedMediaChanged.emit(); self.status='Scanned '+m.source.name; self.notify()
         def job():
             history=core.History(); found=[]
+            media, related = related_media.inventory(src,excluded,core.VIDEO,core.is_link,core.parse)
+            history.restore_related(media,related)
+            self.invoke.emit(lambda: self.set_related(related))
             def files():
-                for folder,dirs,names in os.walk(src,followlinks=False):
-                    dirs[:]=[d for d in dirs if d.casefold()!='.sortrr-trash' and not core.is_link(Path(folder)/d) and not any((Path(folder)/d).resolve().is_relative_to(path) for path in excluded)]
-                    for name in sorted(names):
-                        path=Path(folder)/name
-                        if path.suffix.lower() not in core.VIDEO or core.is_link(path): continue
-                        try: m=core.parse(path)
-                        except OSError: continue
-                        uid=len(found); found.append(m)
-                        if m.status=='Waiting': m.status='Identifying'
-                        self.invoke.emit(lambda m=m:append(m)); yield uid,m
+                for m in media:
+                    uid=len(found); found.append(m)
+                    if m.status=='Waiting': m.status='Identifying'
+                    self.invoke.emit(lambda m=m:append(m))
+                    yield uid,m
             return core.identify_batch(files(),self.catalog,history,dest,mode,options=options,report=lambda uid,m:self.invoke.emit(lambda uid=uid,m=m:changed(uid,m)), finish_scan_on_setup=True)
         def done(result):
             if result['setup']:
                 self.status = 'Scan complete. Connect TMDb for movie lookup, or create entries manually.'
             else: self.status=f"Scan complete. {result['completed']} files, {result['remembered']} remembered, {result['errors']} errors."
+            if self.related:
+                unassigned=sum(not extra['owner'] for extra in self.related)
+                self.status+=f" Found {len(self.related)} bonus videos."
+                if unassigned:
+                    self.status+=f" {unassigned} need an association in Related media."
         self.work(job,done)
         self.scanStarted.emit()
+    def set_related(self, related):
+        self.related = related
+        self.relatedMediaChanged.emit()
+        self.stateChanged.emit()
+
+    @Property('QVariantList',notify=relatedMediaChanged)
+    def relatedMedia(self):
+        return [dict(extra,name=Path(extra['path']).name) for extra in self.related]
+
+    @Property('QVariantList',notify=relatedMediaChanged)
+    def relatedParents(self):
+        return [{'path': '', 'title': 'Leave in source'}] + [
+            {'path': str(m.source),
+             'title': (m.chosen or {}).get('title',m.query) + ' · ' + m.source.name}
+            for m in self.items if m.status not in {core.REJECTED,core.REJECT_MOVED,core.REJECT_RECYCLED}
+        ]
+
+    @Property('QVariantList',constant=True)
+    def extraTypes(self):
+        return related_media.EXTRA_TYPES
+
+    @Slot(str,str,str)
+    def assignRelatedMedia(self,path,owner,category):
+        if self.busy or category not in related_media.EXTRA_TYPES:
+            return
+        if owner and owner not in {str(m.source) for m in self.items}:
+            return
+        for extra in self.related:
+            if extra['path'] == path:
+                updated=dict(extra,owner=owner,category=category,reason='Chosen by you')
+                try:
+                    core.History().save_related(updated)
+                except (OSError,sqlite3.Error) as exc:
+                    self.toast.emit('Could not save the bonus association: '+str(exc))
+                    return
+                extra.update(updated)
+                related_media.attach(self.items,self.related)
+                self.recheck()
+                self.all_changed()
+                self.stateChanged.emit()
+                break
+
     @Slot(int)
     def requestThumbnail(self,uid):
         if self.mutating or not 0<=uid<len(self.items): return
@@ -696,10 +763,12 @@ class Controller(QObject):
     def recheck_match(self, media, output, history):
         if media.status in {'Moved', 'Renamed'}:
             media.source = self.actual(media)
+            for extra in media.extras:
+                extra['owner'] = str(media.source)
         if not media.source.exists():
             media.status = 'File unavailable; scan again'
         elif history.key(media.source) == history.key(core.destination(media, output, self.options)):
-            media.status = 'Already organized'
+            media.status = 'Ready' if related_media.needs_sort(media,core.destination(media,output,self.options),self.options) else 'Already organized'
         elif history.processed(media, output, 'move' if self.in_place else 'copy', self.options):
             media.status = 'Previously moved' if self.in_place else 'Previously copied'
         else:
@@ -755,6 +824,14 @@ class Controller(QObject):
                 return
             rows.extend({'label': m.source.name, 'detail': str(core.destination(m, output, self.options))}
                         for m in items)
+            for media in items:
+                for extra_source, extra_target in related_media.targets(media,core.destination(media,output,self.options),self.options):
+                    rows.append({'label': 'Bonus · ' + extra_source.name, 'detail': str(extra_target)})
+            extra_count = sum(len(media.extras) for media in items)
+            if extra_count:
+                messages.append(f'Includes {extra_count} related bonus videos and matching subtitles.')
+            if any(not extra['owner'] for extra in self.related):
+                messages.append('Unassigned bonus videos stay in the source. Use Related media to attach them.')
             ready_label = 'ready file' if len(items) == 1 else 'ready files'
             messages.append(f'{mode} {len(items)} {ready_label} to {output}.')
             if self.auto_cleanup:

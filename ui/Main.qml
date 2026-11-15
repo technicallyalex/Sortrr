@@ -203,6 +203,13 @@ ApplicationWindow {
                 }
                 ActionButton { text: "Scan again"; visible: window.step === 1; enabled: !s.busy && !!s.source; onClicked: controller.scan() }
                 ActionButton {
+                    objectName: "relatedMediaButton"
+                    text: "Related media (" + s.relatedCount + ")"
+                    visible: window.step > 0 && s.relatedCount > 0
+                    enabled: !s.busy
+                    onClicked: relatedPanel.open()
+                }
+                ActionButton {
                     objectName: "changeHistoryButton"
                     text: "Change history"; visible: window.step === 2; enabled: !s.busy
                     onClicked: changeHistory.open()
@@ -639,6 +646,12 @@ ApplicationWindow {
                 ActionButton { text: "Save token"; primary: true; enabled: !!token.text.trim(); onClicked: { controller.saveToken(token.text); database.close() } }
             }
         }
+    }
+    RelatedMedia {
+        id: relatedPanel
+        parent: Overlay.overlay
+        backend: controller
+        busy: s.busy
     }
     ChangeHistory {
         id: changeHistory

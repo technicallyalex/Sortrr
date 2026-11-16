@@ -2,14 +2,16 @@
 
 Sortrr identifies movies and TV episodes and organizes them for Plex, Jellyfin, and Emby. It runs locally on Windows.
 
-> **Release Candidate 1.** Sortrr is still in testing. Use a small set of test files or a backed-up library before moving, renaming, or cleaning up media.
+> **Release Candidate 2.** Sortrr is still in testing. Use a small set of test files or a backed-up library before moving, renaming, or cleaning up media.
 
-[Download the Windows release](https://github.com/technicallyalex/Sortrr/releases)
+[Download the Windows release](https://github.com/technicallyalex/Sortrr/releases/tag/v1.0.0-rc.2)
 
 ## Features
 
 - Identify files using TMDb and TVmaze. Review uncertain matches with video previews or enter a match manually.
 - Copy or move files using media server presets. Rename media and carry matching subtitles along.
+- Preserve bonus videos in extras folders and review their movie or show associations.
+- Track scanning with overall progress and per-file queued and identifying indicators.
 - Review source cleanup, handle rejected files, and save your place between sessions.
 - Search change history by file name or path and restore a file to its original name and folder.
 

@@ -423,7 +423,7 @@ class Catalog:
         else: m.status='Choose match' if cs else 'No match'
 IDENTIFICATION_WORKERS=12
 
-def identify_batch(jobs,catalog,history=None,library=None,mode='copy',reidentify=False,report=lambda i,m:None,workers=IDENTIFICATION_WORKERS,options=None,finish_scan_on_setup=False):
+def identify_batch(jobs,catalog,history=None,library=None,mode='copy',reidentify=False,report=lambda i,m:None,workers=IDENTIFICATION_WORKERS,options=None,finish_scan_on_setup=False,started=lambda i:None):
     """Bounded streaming jobs, with an option to keep discovering files for manual review."""
     if workers<1: raise ValueError('At least one worker is required')
     history=history or History()
@@ -435,6 +435,7 @@ def identify_batch(jobs,catalog,history=None,library=None,mode='copy',reidentify
     def identify_one(index,m):
         error=0
         try:
+            started(index)
             if not reidentify and (finish_scan_on_setup or not stop.is_set()) and history.restore(m,library,mode,options):
                 return 0, 1
             if stop.is_set() and (not finish_scan_on_setup or m.kind == 'Movie'):

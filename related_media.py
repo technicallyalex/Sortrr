@@ -52,10 +52,11 @@ def context(path, root):
     return None
 
 
-def inventory(root, excluded, video, is_link, parse):
+def inventory(root, excluded, video, is_link, parse, progress=lambda folder,count:None):
     root = Path(root).resolve()
     media, extras = [], []
     for folder, dirs, names in os.walk(root, followlinks=False):
+        progress(str(folder),len(media)+len(extras))
         dirs[:] = sorted(d for d in dirs if d.casefold() != '.sortrr-trash'
                          and not is_link(Path(folder) / d)
                          and not any((Path(folder) / d).resolve().is_relative_to(p) for p in excluded))

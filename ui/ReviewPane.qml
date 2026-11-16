@@ -42,6 +42,67 @@ ColumnLayout {
             onClicked: review.backend.openWizard(-1)
         }
     }
+    Card {
+        objectName: "scanProgressPanel"
+        Layout.fillWidth: true
+        visible: s.scanning
+        implicitHeight: progressContent.implicitHeight + 24
+        ColumnLayout {
+            id: progressContent
+            anchors.fill: parent; anchors.margins: 12; spacing: 7
+            RowLayout {
+                Layout.fillWidth: true
+                BusyIndicator {
+                    running: s.scanning
+                    Layout.preferredWidth: 22; Layout.preferredHeight: 22
+                }
+                Label {
+                    objectName: "scanProgressText"
+                    Layout.fillWidth: true
+                    text: s.scanPhase === "discovering"
+                        ? "Finding media · " + s.scanDiscovered + " files found"
+                        : "Identifying files · " + s.scanCompleted + " of " + s.scanTotal + " finished"
+                    color: Theme.ink; font.pixelSize: 13; font.weight: Font.DemiBold
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
+                }
+                SmallLabel {
+                    visible: s.scanPhase !== "discovering"
+                    text: s.scanActive + " active · " + s.scanQueued + " queued"
+                }
+            }
+            ProgressBar {
+                objectName: "scanProgressBar"
+                Layout.fillWidth: true
+                from: 0; to: Math.max(1,s.scanTotal); value: s.scanCompleted
+                indeterminate: s.scanPhase === "discovering"
+                background: Rectangle { implicitHeight: 5; color: Theme.raised; radius: 3 }
+                contentItem: Item {
+                    implicitHeight: 5
+                    Rectangle {
+                        id: progressFill
+                        width: parent.width * (s.scanPhase === "discovering" ? .3 : s.scanCompleted / Math.max(1,s.scanTotal))
+                        height: parent.height; radius: 3; color: Theme.accent
+                        SequentialAnimation on opacity {
+                            running: s.scanning && s.scanPhase === "discovering"; loops: Animation.Infinite
+                            onStopped: progressFill.opacity = 1
+                            NumberAnimation { from: .35; to: 1; duration: 650 }
+                            NumberAnimation { from: 1; to: .35; duration: 650 }
+                        }
+                    }
+                }
+            }
+            Label {
+                visible: s.scanPhase === "discovering"
+                Layout.fillWidth: true
+                text: s.scanFolder; textFormat: Text.PlainText
+                color: Theme.muted; font.pixelSize: 12; elide: Text.ElideMiddle
+                HoverHandler { id: folderHover }
+                ToolTip.visible: folderHover.hovered && truncated
+                ToolTip.text: text
+            }
+        }
+    }
     RowLayout {
         Layout.fillWidth: true
         spacing: 8
@@ -139,6 +200,7 @@ ColumnLayout {
                 delegate: Item {
                     id: itemRow
                     required property int uid
+                    required property string scanPhase
                     required property int relatedCount
                     required property string mediaTitle
                     required property string fileName
@@ -212,8 +274,24 @@ ColumnLayout {
                             Layout.preferredWidth: 130; Layout.maximumWidth: 160; spacing: 3
                             Rectangle {
                                 Layout.fillWidth: true; height: 23; radius: 6
-                                color: itemRow.statusTone === "good" ? Theme.successSoft : itemRow.statusTone === "done" ? Theme.accentSoft : itemRow.statusTone === "review" ? Theme.warningSoft : Theme.raised
-                                Label { anchors.fill: parent; anchors.leftMargin: 7; anchors.rightMargin: 7; text: itemRow.statusText; textFormat: Text.PlainText; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11; color: review.host.ink; elide: Text.ElideRight }
+                                color: itemRow.scanPhase === "identifying" ? Theme.accentSoft : itemRow.scanPhase === "queued" ? Theme.raised : itemRow.statusTone === "good" ? Theme.successSoft : itemRow.statusTone === "done" ? Theme.accentSoft : itemRow.statusTone === "review" ? Theme.warningSoft : Theme.raised
+                                RowLayout {
+                                    anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6; spacing: 4
+                                    BusyIndicator {
+                                        objectName: "itemScanSpinner"
+                                        visible: itemRow.scanPhase === "identifying"
+                                        running: visible && !itemRow.pooled
+                                        Layout.preferredWidth: 17; Layout.preferredHeight: 17
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: itemRow.scanPhase === "identifying" ? "Identifying…"
+                                            : itemRow.scanPhase === "queued" ? "Queued" : itemRow.statusText
+                                        textFormat: Text.PlainText; font.pixelSize: 11
+                                        color: review.host.ink; elide: Text.ElideRight
+                                        Accessible.name: text + " " + itemRow.fileName
+                                    }
+                                }
                                 HoverHandler { id: statusHover }
                                 ToolTip.visible: statusHover.hovered; ToolTip.text: itemRow.statusText + (itemRow.isRemembered ? " (saved match)" : "")
                             }

@@ -1,4 +1,5 @@
 """Qt Quick controller: UI changes are dispatched onto the GUI thread."""
+import time
 import json,logging,os,urllib.request,hashlib,tempfile,re,sqlite3
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor,as_completed
@@ -42,7 +43,7 @@ def saved_runtime(m):
     return m.runtime_check if m.chosen and m.runtime_check.get('key')==runtime_key(m.chosen,m.kind,m.season,m.episode) else {}
 
 class MediaModel(QAbstractListModel):
-    names=['uid','mediaTitle','fileName','filePath','mediaKind','releaseYear','seasonText','episodeText','statusText','statusTone','thumbnail','isSelected','isRemembered','runtimeStatus','runtimeLabel','relatedCount']
+    names=['uid','mediaTitle','fileName','filePath','mediaKind','releaseYear','seasonText','episodeText','statusText','statusTone','thumbnail','isSelected','isRemembered','runtimeStatus','runtimeLabel','relatedCount','scanPhase']
     def __init__(self,c): super().__init__(c); self.c=c
     def roleNames(self): return {int(Qt.ItemDataRole.UserRole)+i+1:name.encode() for i,name in enumerate(self.names)}
     def rowCount(self,parent=QModelIndex()): return 0 if parent.isValid() else len(self.c.items)
@@ -93,6 +94,13 @@ class Controller(QObject):
         self.items=[]; self.selected=set(); self.thumbs={}; self.thumb_requested=set(); self.busy=False; self.mutating=False; self.status='Choose a source folder to begin.'
         self.source=''; self.destination=''; self.reject_folder=''; self.in_place=False; self.options=core.SortOptions(); self.auto_cleanup=False; self.sort_by='Source name'; self.descending=False
         self.catalog=core.Catalog(); self.pending=None; self.last_sort=''; self.epoch=0; self.closed=False
+        self.scanning=False
+        self.scan_phase=''
+        self.scan_states={}
+        self.scan_total=0
+        self.scan_completed=0
+        self.scan_discovered=0
+        self.scan_folder=''
         self.related = []
         self.change_runs = {}
         self.file_trails = {}
@@ -161,6 +169,11 @@ class Controller(QObject):
             'rejected': sum(m.status == core.REJECTED for m in self.items),
             'canRecycle': QFile.supportsMoveToTrash(),
             'autoRename': self.options.rename_files, 'autoCleanup': self.auto_cleanup,
+            'scanning':self.scanning,'scanPhase':self.scan_phase,'scanTotal':self.scan_total,
+            'scanCompleted':self.scan_completed,'scanDiscovered':self.scan_discovered,
+            'scanFolder':self.scan_folder,
+            'scanActive':sum(value=='identifying' for value in self.scan_states.values()) if self.scanning else 0,
+            'scanQueued':sum(value=='queued' for value in self.scan_states.values()) if self.scanning else 0,
             'busy': self.busy, 'mutating': self.mutating, 'status': self.status,
             'relatedCount': len(self.related),
             'total': len(self.items), 'ready': sum(m.status == 'Ready' for m in self.items),
@@ -233,7 +246,7 @@ class Controller(QObject):
     def row(self,uid):
         m=self.items[uid]; c=m.chosen or {}; status=m.status
         tone='good' if status=='Ready' else ('done' if status in {'Copied','Moved','Renamed','Already organized','Previously copied','Previously moved',core.REJECT_MOVED,core.REJECT_RECYCLED} else ('muted' if status=='Skipped by you' else ('error' if status.startswith('Lookup failed') or status=='Connect TMDb' else 'review')))
-        return dict(relatedCount=len(m.extras),uid=uid,mediaTitle=c.get('title',m.query),fileName=self.actual(m).name,filePath=str(self.actual(m)),mediaKind=m.kind,releaseYear=c.get('year',m.year),seasonText=str(m.season) if m.season is not None else '',episodeText=f'S{m.season:02d}E{m.episode:02d}' if m.season is not None and m.episode is not None else '',statusText=status,statusTone=tone,thumbnail=self.thumbs.get(uid,''),isSelected=uid in self.selected,isRemembered=m.cached,runtimeStatus=saved_runtime(m).get('status','Unchecked'),runtimeLabel=saved_runtime(m).get('label','Runtime not checked'))
+        return dict(scanPhase=self.scan_states.get(uid,'') if self.scanning else '',relatedCount=len(m.extras),uid=uid,mediaTitle=c.get('title',m.query),fileName=self.actual(m).name,filePath=str(self.actual(m)),mediaKind=m.kind,releaseYear=c.get('year',m.year),seasonText=str(m.season) if m.season is not None else '',episodeText=f'S{m.season:02d}E{m.episode:02d}' if m.season is not None and m.episode is not None else '',statusText=status,statusTone=tone,thumbnail=self.thumbs.get(uid,''),isSelected=uid in self.selected,isRemembered=m.cached,runtimeStatus=saved_runtime(m).get('status','Unchecked'),runtimeLabel=saved_runtime(m).get('label','Runtime not checked'))
     def visible_ids(self): return [self.proxy.mapToSource(self.proxy.index(i,0)).row() for i in range(self.proxy.rowCount())]
     def selected_visible(self): return [i for i in self.visible_ids() if i in self.selected]
     def load_settings(self):
@@ -469,7 +482,11 @@ class Controller(QObject):
             def finish():
                 self.busy=False; self.mutating=False
                 if self.previews.closed: self.previews=PreviewManager(core.DATA/'previews',self.invoke.emit); self.thumb_requested.clear()
-                if error: self.status=error; self.toast.emit(error)
+                if error:
+                    self.scanning=False
+                    self.all_changed()
+                    self.status=error
+                    self.toast.emit(error)
                 elif done: done(result)
                 self.stateChanged.emit()
             self.invoke.emit(finish)
@@ -559,21 +576,45 @@ class Controller(QObject):
         excluded = [path for path in (dest if not self.in_place else None, reject_folder)
                     if path and path != src and path.is_relative_to(src)]
         self.save(); self.epoch+=1; self.selected.clear(); self.thumbs.clear(); self.thumb_requested.clear(); self.model.reset(); self.set_related([]); options=self.options; mode='move' if self.in_place else 'copy'; self.status='Discovering and identifying files...'; self.last_sort=''
-        def append(m): self.model.append(m); self.notify()
-        def changed(uid,m): self.model.changed(uid); self.relatedMediaChanged.emit(); self.status='Scanned '+m.source.name; self.notify()
+        self.scanning=True
+        self.scan_phase='discovering'
+        self.scan_states={}
+        self.scan_total=0
+        self.scan_completed=0
+        self.scan_discovered=0
+        self.scan_folder=str(src)
+        def discovered(folder,count):
+            self.scan_folder=folder
+            self.scan_discovered=count
+            self.notify()
+        def prepared(media,related):
+            self.scan_phase='identifying'
+            self.scan_total=len(media)
+            self.scan_discovered=len(media)+len(related)
+            self.scan_states={uid:'queued' for uid in range(len(media))}
+            self.model.reset(media)
+            self.set_related(related)
+            self.notify()
         def job():
-            history=core.History(); found=[]
-            media, related = related_media.inventory(src,excluded,core.VIDEO,core.is_link,core.parse)
+            history=core.History()
+            last_update=0
+            def discovery(folder,count):
+                nonlocal last_update
+                now=time.monotonic()
+                if now-last_update>=.1:
+                    last_update=now
+                    self.invoke.emit(lambda folder=folder,count=count:discovered(folder,count))
+            media,related=related_media.inventory(src,excluded,core.VIDEO,core.is_link,core.parse,discovery)
             history.restore_related(media,related)
-            self.invoke.emit(lambda: self.set_related(related))
-            def files():
-                for m in media:
-                    uid=len(found); found.append(m)
-                    if m.status=='Waiting': m.status='Identifying'
-                    self.invoke.emit(lambda m=m:append(m))
-                    yield uid,m
-            return core.identify_batch(files(),self.catalog,history,dest,mode,options=options,report=lambda uid,m:self.invoke.emit(lambda uid=uid,m=m:changed(uid,m)), finish_scan_on_setup=True)
+            self.invoke.emit(lambda:prepared(media,related))
+            return core.identify_batch(enumerate(media),self.catalog,history,dest,mode,options=options,
+                started=lambda uid:self.invoke.emit(lambda uid=uid:self.scan_started_item(uid)),
+                report=lambda uid,m:self.invoke.emit(lambda uid=uid:self.scan_finished_item(uid)),
+                finish_scan_on_setup=True)
         def done(result):
+            self.scanning=False
+            self.scan_phase='complete'
+            self.all_changed()
             if result['setup']:
                 self.status = 'Scan complete. Connect TMDb for movie lookup, or create entries manually.'
             else: self.status=f"Scan complete. {result['completed']} files, {result['remembered']} remembered, {result['errors']} errors."
@@ -584,6 +625,19 @@ class Controller(QObject):
                     self.status+=f" {unassigned} need an association in Related media."
         self.work(job,done)
         self.scanStarted.emit()
+    def scan_started_item(self,uid):
+        self.scan_states[uid]='identifying'
+        self.model.changed(uid)
+        self.notify()
+
+    def scan_finished_item(self,uid):
+        if self.scan_states.get(uid)!='complete':
+            self.scan_completed+=1
+        self.scan_states[uid]='complete'
+        self.model.changed(uid)
+        self.relatedMediaChanged.emit()
+        self.notify()
+
     def set_related(self, related):
         self.related = related
         self.relatedMediaChanged.emit()
@@ -669,10 +723,21 @@ class Controller(QObject):
     def reidentifySelected(self):
         ids=[i for i in self.selected_visible() if self.items[i].status not in {core.REJECTED,core.REJECT_MOVED,core.REJECT_RECYCLED}]
         if not ids or self.busy: return
+        self.scanning=True
+        self.scan_phase='identifying'
+        self.scan_total=len(ids)
+        self.scan_completed=0
+        self.scan_states={uid:'queued' for uid in ids}
         for uid in ids:
             m=self.items[uid]; m.source=self.actual(m); m.chosen=None; m.runtime_check={}; m.cached=False; m.status='Re-identifying'; self.model.changed(uid)
-        def job(): return core.identify_batch([(i,self.items[i]) for i in ids],self.catalog,reidentify=True,report=lambda uid,m:self.invoke.emit(lambda uid=uid:self.model.changed(uid)))
+        def job():
+            return core.identify_batch([(i,self.items[i]) for i in ids],self.catalog,reidentify=True,
+                started=lambda uid:self.invoke.emit(lambda uid=uid:self.scan_started_item(uid)),
+                report=lambda uid,m:self.invoke.emit(lambda uid=uid:self.scan_finished_item(uid)))
         def done(result):
+            self.scanning=False
+            self.scan_phase='complete'
+            self.all_changed()
             self.status=f"Re-identified {result['completed']} files; {result['errors']} errors."
             if result['setup']: self.status=result['setup']; self.dialogRequested.emit({'kind':'database','title':'Connect TMDb'})
         self.work(job,done)

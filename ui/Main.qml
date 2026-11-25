@@ -10,6 +10,8 @@ ApplicationWindow {
     width: 1240; height: 820
     minimumWidth: 1000; minimumHeight: 670
     title: "Sortrr"
+    flags: Qt.Window | Qt.FramelessWindowHint | Qt.WindowSystemMenuHint
+        | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint
     color: Theme.canvas
     font.family: "Segoe UI"
     palette.window: Theme.surface
@@ -148,10 +150,13 @@ ApplicationWindow {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
-        Rectangle {
-            Layout.fillWidth: true; implicitHeight: 76; color: Theme.surface
-            RowLayout {
-                anchors.fill: parent; anchors.leftMargin: 24; anchors.rightMargin: 24; spacing: 12
+        TitleBar {
+            objectName: "mainTitleBar"
+            Layout.fillWidth: true
+            implicitHeight: 76
+            targetWindow: window
+            headerContent: RowLayout {
+                anchors.fill: parent; anchors.leftMargin: 24; anchors.rightMargin: 8; spacing: 12
                 RowLayout {
                     spacing: 10
                     Image { source: "assets/sortrr.png"; Layout.preferredWidth: 36; Layout.preferredHeight: 36; fillMode: Image.PreserveAspectFit }
@@ -173,7 +178,6 @@ ApplicationWindow {
                     }
                 }
             }
-            Rectangle { width: parent.width; height: 1; anchors.bottom: parent.bottom; color: window.line }
         }
         ColumnLayout {
             Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 24; spacing: 14
@@ -619,10 +623,13 @@ ApplicationWindow {
             }
         }
     }
+    WindowFrame { targetWindow: window }
     SettingsWindow {
         id: settings
         transientParent: window
         connected: s.connected
+        backend: controller
+        onInstallUpdateRequested: controller.installUpdate(window.step === 2 ? "organize" : "review",window.scope,window.rejectMode)
         onDatabaseRequested: controller.requestDatabase()
         onClearCacheRequested: controller.prepare("clear")
         onDarkModeRequested: function(enabled) { controller.setDarkMode(enabled) }

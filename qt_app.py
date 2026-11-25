@@ -9,6 +9,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication
 
 from qt_backend import Controller
+from app_version import VERSION
 
 
 def create_engine(controller):
@@ -30,6 +31,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
     app = QApplication(sys.argv)
     app.setApplicationName("Sortrr")
+    app.setApplicationVersion(VERSION)
     app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent / "ui" / "assets" / "sortrr.png")))
     controller = Controller()
     app.aboutToQuit.connect(controller.shutdown)

@@ -11,6 +11,10 @@ from PySide6.QtWidgets import QFileDialog
 from PySide6.QtMultimedia import QMediaPlayer,QAudioOutput,QMediaMetaData,QAudioDevice,QMediaDevices
 import core
 import related_media
+import updates
+import cache_storage
+from app_paths import FROZEN
+from app_version import VERSION
 from previews import PreviewManager,timestamp
 log=logging.getLogger('sortrr')
 class ArtworkCache:
@@ -84,6 +88,8 @@ class MediaProxy(QSortFilterProxyModel):
 class Controller(QObject):
     invoke=Signal(object); stateChanged=Signal(); wizardChanged=Signal(); playbackChanged=Signal()
     darkModeChanged = Signal()
+    updateChanged = Signal()
+    cacheChanged = Signal()
     changeHistoryChanged = Signal()
     relatedMediaChanged = Signal()
     audioOutputsChanged=Signal()
@@ -101,12 +107,17 @@ class Controller(QObject):
         self.scan_completed=0
         self.scan_discovered=0
         self.scan_folder=''
+        self.update_info={'status':'idle','message':'Check GitHub for a newer version.','progress':0}
+        self.update_release=None
+        self.update_installer=None
+        self.cache_info={'size':'Not measured','bytes':0,'files':0,'message':'','measuring':False,'moving':False}
+        self.cache_generation=0
         self.related = []
         self.change_runs = {}
         self.file_trails = {}
         self.change_errors = {}
         self.ops=ThreadPoolExecutor(max_workers=1,thread_name_prefix='sortrr-work'); self.details_pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix='sortrr-info')
-        self.previews=PreviewManager(core.DATA/'previews',self.invoke.emit); self.art=ArtworkCache(core.DATA/'posters')
+        self.previews=PreviewManager(cache_storage.root(core.DATA)/'previews',self.invoke.emit); self.art=ArtworkCache(cache_storage.root(core.DATA)/'posters')
         self.model=MediaModel(self); self.proxy=MediaProxy(self); self.proxy.setSourceModel(self.model)
         self.notify_timer=QTimer(self); self.notify_timer.setSingleShot(True); self.notify_timer.setInterval(45); self.notify_timer.timeout.connect(self.stateChanged)
         self.player = QMediaPlayer(self)
@@ -153,6 +164,158 @@ class Controller(QObject):
         except OSError:
             log.exception('Could not save appearance preference')
             self.toast.emit('Appearance changed, but the preference could not be saved.')
+
+    @Property('QVariantMap',notify=updateChanged)
+    def updateState(self):
+        return dict(self.update_info,current=VERSION,
+                    available=self.update_release['version'] if self.update_release else '',
+                    canInstall=updates.FROZEN and os.name=='nt')
+
+    def set_update_state(self,status,message,progress=0):
+        self.update_info={'status':status,'message':message,'progress':progress}
+        self.updateChanged.emit()
+
+    @Slot()
+    def checkForUpdates(self):
+        if self.busy:
+            return
+        self.update_release=None
+        self.set_update_state('checking','Checking GitHub for updates…')
+        def check():
+            try:
+                return updates.check_updates(),''
+            except Exception as exc:
+                return None,str(exc)
+        def checked(result):
+            release,error=result
+            self.update_release=release
+            if error:
+                self.set_update_state('error','Could not check for updates. '+error)
+            elif release:
+                self.set_update_state('available','Version '+release['version']+' is ready to install.')
+            else:
+                self.set_update_state('current','You have the newest available version.')
+        self.work(check,checked)
+
+    @Slot(str,str,str)
+    def installUpdate(self,stage,scope,reject_mode):
+        if self.busy or not self.update_release or not (updates.FROZEN and os.name=='nt'):
+            return
+        if self.items and self.source:
+            saved_stage='wizard' if self.w.get('open') else stage
+            if not self.saveProgress(saved_stage,scope,reject_mode):
+                self.set_update_state('error','Save your progress before installing the update.')
+                return
+        release=dict(self.update_release)
+        self.set_update_state('downloading','Downloading update…')
+        def progress(done,total):
+            fraction=done/total
+            message=('Verifying and preparing the update…' if done==total
+                     else f'Downloading update… {fraction:.0%}')
+            self.invoke.emit(lambda:self.set_update_state('downloading',message,fraction))
+        def install():
+            try:
+                manifest=updates.stage_update(release,progress=progress)
+                process=updates.launch_installer(manifest)
+                return process,''
+            except Exception as exc:
+                return None,str(exc)
+        def staged(result):
+            process,error=result
+            if error:
+                self.set_update_state('error','Could not install the update. '+error)
+                return
+            self.update_installer=process
+            self.set_update_state('installing','Restarting Sortrr to finish the update…',1)
+            QTimer.singleShot(200,QGuiApplication.instance().quit)
+        self.work(install,staged)
+
+    @Property('QVariantMap',notify=cacheChanged)
+    def cacheInfo(self):
+        return dict(self.cache_info,directory=str(cache_storage.root(core.DATA)))
+
+    @Slot()
+    def refreshCacheInfo(self):
+        if self.busy or self.cache_info['measuring'] or self.closed:
+            return
+        self.cache_info.update(measuring=True)
+        self.cacheChanged.emit()
+        generation=self.cache_generation
+        location=cache_storage.root(core.DATA)
+        def measure():
+            try:
+                result=cache_storage.measure(location)
+                error=''
+            except (OSError,ValueError) as exc:
+                result=(0,0)
+                error=str(exc)
+            def done():
+                if generation!=self.cache_generation:
+                    return
+                size,count=result
+                self.cache_info.update(measuring=False,bytes=size,files=count,
+                    size=cache_storage.format_size(size) if not error else 'Unavailable')
+                if error:
+                    self.cache_info['message']='Could not measure the cache. '+error
+                elif self.cache_info['message'].startswith('Could not measure'):
+                    self.cache_info['message']=''
+                self.cacheChanged.emit()
+            self.invoke.emit(done)
+        self.details_pool.submit(measure)
+
+    @Slot()
+    def chooseCacheDirectory(self):
+        if self.busy:
+            return
+        folder=QFileDialog.getExistingDirectory(None,'Choose cache folder',str(cache_storage.root(core.DATA)))
+        if folder:
+            self.moveCacheDirectory(folder)
+
+    @Slot(str)
+    def moveCacheDirectory(self,folder):
+        if self.busy:
+            return
+        destination=Path(folder).expanduser().absolute()
+        if destination.resolve()==cache_storage.root(core.DATA):
+            return
+        if FROZEN and any(destination.resolve().is_relative_to(updates.APP_DIR/name) for name in updates.MANAGED):
+            self.toast.emit('Choose a cache folder outside the application runtime files.')
+            return
+        self.cache_generation+=1
+        self.detail_generation+=1
+        if self.detail_future:
+            self.detail_future.cancel()
+        self.cache_info.update(moving=True,measuring=False,message='Moving cache…')
+        self.cacheChanged.emit()
+        def progress(done,total):
+            message=f'Moving cache… {done/max(1,total):.0%}'
+            self.invoke.emit(lambda:self.cache_progress(message))
+        def move():
+            self.details_pool.shutdown(wait=True,cancel_futures=True)
+            try:
+                remaining=cache_storage.relocate(core.DATA,destination,progress)
+                return remaining,''
+            except (OSError,ValueError) as exc:
+                return 0,str(exc)
+            finally:
+                self.details_pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix='sortrr-info')
+                self.catalog=core.Catalog()
+                self.art=ArtworkCache(cache_storage.root(core.DATA)/'posters')
+        def moved(result):
+            remaining,error=result
+            self.cache_info.update(moving=False,message=('Could not move the cache. '+error if error
+                else 'Cache moved.'+(' Some old files could not be removed.' if remaining else '')))
+            self.epoch+=1
+            self.thumbs.clear()
+            self.thumb_requested.clear()
+            self.cacheChanged.emit()
+            self.all_changed()
+            self.refreshCacheInfo()
+        self.work(move,moved,mutation=True)
+
+    def cache_progress(self,message):
+        self.cache_info['message']=message
+        self.cacheChanged.emit()
 
     @Property(QObject,constant=True)
     def mediaModel(self): return self.proxy
@@ -481,7 +644,7 @@ class Controller(QObject):
             except Exception as exc: error=str(exc); log.exception('Operation failed')
             def finish():
                 self.busy=False; self.mutating=False
-                if self.previews.closed: self.previews=PreviewManager(core.DATA/'previews',self.invoke.emit); self.thumb_requested.clear()
+                if self.previews.closed: self.previews=PreviewManager(cache_storage.root(core.DATA)/'previews',self.invoke.emit); self.thumb_requested.clear()
                 if error:
                     self.scanning=False
                     self.all_changed()
@@ -1085,7 +1248,7 @@ class Controller(QObject):
                 })
             self.work(lambda:core.plan_cleanup(root,excluded),done)
         elif action in {'undo','clear'}:
-            self.pending=(action,None); self.dialogRequested.emit({'kind':'confirm','action':action,'title':'Undo last operation' if action=='undo' else 'Clear identification cache','text':'Restore unchanged moved, renamed and cleaned files; remove unchanged copies. Occupied paths are preserved.' if action=='undo' else 'Forget saved progress, matches, skips, reject marks, API responses and artwork. Media and file change history are preserved.','rows':[],'button':'Undo operation' if action=='undo' else 'Clear cache'})
+            self.pending=(action,None); self.dialogRequested.emit({'kind':'confirm','action':action,'title':'Undo last operation' if action=='undo' else 'Clear identification cache','text':'Restore unchanged moved, renamed and cleaned files; remove unchanged copies. Occupied paths are preserved.' if action=='undo' else 'Forget saved progress, matches, skips, reject marks, API responses, artwork and cached video previews. Media and file change history are preserved.','rows':[],'button':'Undo operation' if action=='undo' else 'Clear cache'})
     @Slot()
     def cancelPlan(self):
         self.pending = None
@@ -1158,7 +1321,13 @@ class Controller(QObject):
                     message += f' Skipped {len(skipped)}. ' + (next(iter(skipped.values())) if action == 'undo'
                                                               else 'See the affected rows for details.')
                 return journal, message, (selected, skipped)
-            core.History().clear(); self.catalog.clear_cache(); self.art.clear()
+            self.details_pool.shutdown(wait=True,cancel_futures=True)
+            try:
+                core.History().clear()
+                self.catalog.clear_cache()
+                cache_storage.clear(cache_storage.root(core.DATA))
+            finally:
+                self.details_pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix='sortrr-info')
             (core.DATA / 'progress.json').unlink(missing_ok=True)
             for m in self.items:
                 if m.status not in {core.REJECT_MOVED, core.REJECT_RECYCLED}:
@@ -1172,7 +1341,13 @@ class Controller(QObject):
                         media.status = core.REJECT_MOVED if target else core.REJECT_RECYCLED
                         media.organized_path = target
             if action=='sort': self.last_sort=text
-            if action=='clear': self.saved_progress=None
+            if action=='clear':
+                self.saved_progress=None
+                self.thumbs.clear()
+                self.thumb_requested.clear()
+                self.cache_generation+=1
+                self.cache_info.update(measuring=False)
+                self.refreshCacheInfo()
             if action in {'undo', 'revert', 'restore-original'}:
                 self.last_sort=''
                 self.epoch+=1; self.selected.clear(); self.thumbs.clear(); self.thumb_requested.clear(); self.model.reset()
@@ -1186,7 +1361,7 @@ class Controller(QObject):
                 errors.update(skipped)
             if action in {'revert', 'restore-original'}:
                 self.loadChangeHistory()
-        self.save(); self.work(job,done,mutation=action in {'sort','rename','cleanup','undo','revert','restore-original'})
+        self.save(); self.work(job,done,mutation=action in {'sort','rename','cleanup','undo','revert','restore-original','clear'})
     def progress(self,text): self.status=text; self.all_changed(); self.notify()
     @Slot(int)
     def openLocation(self,uid):

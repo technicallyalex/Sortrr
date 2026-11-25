@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 import related_media
+import cache_storage
 import errno, threading, tempfile, math
 from concurrent.futures import ThreadPoolExecutor, Future, wait, FIRST_COMPLETED
 from email.utils import parsedate_to_datetime
@@ -246,7 +247,7 @@ class Catalog:
         finally: self._fresh=previous
     def clear_cache(self):
         with self.lock: self.memory.clear()
-        folder=DATA/'cache'
+        folder=cache_storage.root(DATA)/'cache'
         if folder.is_dir():
             for p in folder.iterdir():
                 if re.fullmatch(r'[0-9a-f]{64}\.json',p.name) and p.is_file() and not p.is_symlink(): p.unlink()
@@ -282,7 +283,7 @@ class Catalog:
         finally:
             with self.lock: self.inflight.pop(key,None)
     def fetch(self,url):
-        cache=DATA/'cache'/(hashlib.sha256(url.encode()).hexdigest()+'.json')
+        cache=cache_storage.root(DATA)/'cache'/(hashlib.sha256(url.encode()).hexdigest()+'.json')
         if not self._fresh and cache.exists():
             try:
                 if time.time()-cache.stat().st_mtime<604800:
@@ -1091,7 +1092,7 @@ def plan_cleanup(source,excluded=()):
     if is_link(source): raise ValueError('Choose a source folder that is not a link or junction')
     root=source.resolve()
     if not root.is_dir(): raise ValueError('Choose an existing source folder')
-    protected=[Path(p).resolve() for p in excluded]+[ROOT.resolve(),DATA.resolve()]
+    protected=[Path(p).resolve() for p in excluded]+[ROOT.resolve(),DATA.resolve(),cache_storage.root(DATA)]
     def protected_path(path):
         resolved=path.resolve()
         return any(resolved.is_relative_to(p) for p in protected)

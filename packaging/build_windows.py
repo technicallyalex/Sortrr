@@ -1,5 +1,6 @@
 """Build the portable Windows x64 release from the project checkout."""
 import argparse
+import json
 import importlib.metadata
 import os
 import platform
@@ -12,6 +13,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 BUILD = ROOT / "build" / "windows"
+sys.path.insert(0, str(ROOT))
+from app_version import VERSION
 
 
 def checked_output_path(path):
@@ -42,6 +45,7 @@ def build(dist):
         "--specpath", str(BUILD), "--hidden-import", "PySide6.QtQuick",
         "--additional-hooks-dir", str(ROOT / "packaging" / "hooks"),
         "--add-data", f"{ROOT / 'ui'}:ui",
+        "--add-data", f"{ROOT / 'packaging' / 'install_update.ps1'}:packaging",
     ]
     for tool in tools:
         command.extend(("--add-data", f"{tool}:tools"))
@@ -53,6 +57,7 @@ def build(dist):
     env["PYINSTALLER_CONFIG_DIR"] = str(BUILD / "cache")
     subprocess.run([*command, str(ROOT / "Start-Sortrr.pyw")], cwd=ROOT, env=env, check=True)
 
+    (package / "version.json").write_text(json.dumps({"version": VERSION}), encoding="utf-8")
     licenses = package / "licenses"
     licenses.mkdir(exist_ok=True)
     python_license = Path(sys.base_prefix) / "LICENSE.txt"

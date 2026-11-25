@@ -208,7 +208,7 @@ class PreviewManager:
             for proc in processes:
                 try: proc.wait(timeout=3)
                 except (OSError,subprocess.TimeoutExpired): pass
-        self.pool.shutdown(wait=False,cancel_futures=True)
+        self.pool.shutdown(wait=wait,cancel_futures=True)
 
 class VideoPreview(ttk.Frame):
     def __init__(self,parent,manager,size=(352,198)):

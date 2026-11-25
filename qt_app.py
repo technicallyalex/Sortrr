@@ -13,14 +13,6 @@ from app_version import VERSION
 
 
 def create_engine(controller):
-    app = QApplication.instance()
-
-    def apply_appearance():
-        scheme = Qt.ColorScheme.Dark if controller.darkMode else Qt.ColorScheme.Light
-        app.styleHints().setColorScheme(scheme)
-
-    controller.darkModeChanged.connect(apply_appearance)
-    apply_appearance()
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("controller", controller)
     engine.load(QUrl.fromLocalFile(str(Path(__file__).resolve().parent / "ui" / "Main.qml")))

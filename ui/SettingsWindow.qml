@@ -108,33 +108,16 @@ ApplicationWindow {
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 4
                         SettingTitle { text: "Appearance" }
-                        SettingDetail { text: "Use dark mode throughout Sortrr." }
+                        SettingDetail { text: "Follow Windows or choose a theme." }
                     }
-                    Switch {
-                        id: themeSwitch
-                        objectName: "darkModeOption"
-                        Accessible.name: "Dark mode"
+                    SelectBox {
+                        objectName: "appearanceOption"
+                        Accessible.name: "Appearance"
+                        Layout.preferredWidth: 180
+                        model: ["Use system setting", "Light", "Dark"]
+                        currentIndex: ["system", "light", "dark"].indexOf(settings.backend.appearance)
                         enabled: !settings.backend.state.busy
-                        checked: Theme.dark
-                        onToggled: settings.darkModeRequested(checked)
-                        implicitWidth: implicitIndicatorWidth + leftPadding + rightPadding
-                        implicitHeight: implicitIndicatorHeight + topPadding + bottomPadding
-                        padding: 4
-                        contentItem: Item {}
-                        indicator: Rectangle {
-                            implicitWidth: 46; implicitHeight: 26
-                            x: themeSwitch.leftPadding; y: (themeSwitch.height - height) / 2
-                            radius: height / 2
-                            color: themeSwitch.checked ? Theme.accent : Theme.raised
-                            border.color: themeSwitch.visualFocus ? Theme.focus : Theme.quiet
-                            border.width: themeSwitch.visualFocus ? 2 : themeSwitch.checked ? 0 : 1
-                            Rectangle {
-                                width: 18; height: 18; radius: 9
-                                anchors.verticalCenter: parent.verticalCenter
-                                x: themeSwitch.checked ? parent.width - width - 4 : 4
-                                color: themeSwitch.checked ? Theme.accentForeground : Theme.quiet
-                            }
-                        }
+                        onActivated: settings.backend.setAppearance(["system", "light", "dark"][currentIndex])
                     }
                 }
             }

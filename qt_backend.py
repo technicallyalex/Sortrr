@@ -89,6 +89,7 @@ class MediaProxy(QSortFilterProxyModel):
 class Controller(QObject):
     invoke=Signal(object); stateChanged=Signal(); wizardChanged=Signal(); playbackChanged=Signal()
     darkModeChanged = Signal()
+    appearanceChanged = Signal()
     updateChanged = Signal()
     cacheChanged = Signal()
     changeHistoryChanged = Signal()
@@ -128,6 +129,7 @@ class Controller(QObject):
         self.frame_ready = False
         self.audio_device_id = ''
         self.dark_mode = False
+        self.appearance_mode = 'system'
         self.output_devices = []
         self.media_devices = QMediaDevices(self)
         self.media_devices.audioOutputsChanged.connect(self.refresh_audio_outputs)
@@ -141,6 +143,10 @@ class Controller(QObject):
         self.w={'open':False}; self.wids=[]; self.windex=0; self.wdrafts={}; self.detail_generation=0; self.detail_future=None
         self.player.seekableChanged.connect(self.apply_wizard_seek)
         self.load_settings()
+        app = QGuiApplication.instance()
+        if app:
+            app.styleHints().colorSchemeChanged.connect(self.sync_color_scheme)
+        self.apply_appearance()
         self.refresh_audio_outputs()
         self.saved_progress = self.read_progress()
     @Slot(object)
@@ -154,17 +160,43 @@ class Controller(QObject):
     def darkMode(self):
         return self.dark_mode
 
-    @Slot(bool)
-    def setDarkMode(self, enabled):
-        if self.dark_mode == enabled:
+    @Property(str, notify=appearanceChanged)
+    def appearance(self):
+        return self.appearance_mode
+
+    def sync_color_scheme(self, *_):
+        app = QGuiApplication.instance()
+        dark = self.appearance_mode == 'dark' or (
+            self.appearance_mode == 'system' and app is not None
+            and app.styleHints().colorScheme() == Qt.ColorScheme.Dark)
+        if self.dark_mode != dark:
+            self.dark_mode = dark
+            self.darkModeChanged.emit()
+
+    def apply_appearance(self):
+        app = QGuiApplication.instance()
+        if app:
+            schemes = {'system': Qt.ColorScheme.Unknown,
+                       'light': Qt.ColorScheme.Light, 'dark': Qt.ColorScheme.Dark}
+            app.styleHints().setColorScheme(schemes[self.appearance_mode])
+        self.sync_color_scheme()
+
+    @Slot(str)
+    def setAppearance(self, mode):
+        if mode not in {'system', 'light', 'dark'} or mode == self.appearance_mode:
             return
-        self.dark_mode = enabled
-        self.darkModeChanged.emit()
+        self.appearance_mode = mode
+        self.apply_appearance()
+        self.appearanceChanged.emit()
         try:
             self.save()
         except OSError:
             log.exception('Could not save appearance preference')
             self.toast.emit('Appearance changed, but the preference could not be saved.')
+
+    @Slot(bool)
+    def setDarkMode(self, enabled):
+        self.setAppearance('dark' if enabled else 'light')
 
     @Property('QVariantMap',notify=updateChanged)
     def updateState(self):
@@ -415,7 +447,7 @@ class Controller(QObject):
     def selected_visible(self): return [i for i in self.visible_ids() if i in self.selected]
     def load_settings(self):
         try:
-            d=json.loads((core.DATA/'settings.json').read_text(encoding='utf-8-sig')); self.source=d.get('source',''); self.destination=d.get('library',''); self.reject_folder=d.get('reject_folder',''); self.in_place=bool(d.get('in_place',False)); self.options=core.SortOptions(**d.get('sorting',{})); self.auto_cleanup=bool(d.get('auto_cleanup',False)); self.proxy.kind=d.get('media_filter','All media'); self.sort_by=d.get('sort_by','Source name'); self.descending=bool(d.get('descending',False)); self.audio_device_id=str(d.get('audio_output_device') or ''); self.dark_mode=d.get('dark_mode') is True
+            d=json.loads((core.DATA/'settings.json').read_text(encoding='utf-8-sig')); self.source=d.get('source',''); self.destination=d.get('library',''); self.reject_folder=d.get('reject_folder',''); self.in_place=bool(d.get('in_place',False)); self.options=core.SortOptions(**d.get('sorting',{})); self.auto_cleanup=bool(d.get('auto_cleanup',False)); self.proxy.kind=d.get('media_filter','All media'); self.sort_by=d.get('sort_by','Source name'); self.descending=bool(d.get('descending',False)); self.audio_device_id=str(d.get('audio_output_device') or ''); self.appearance_mode=d.get('appearance', ('dark' if d.get('dark_mode') is True else 'light') if 'dark_mode' in d else 'system'); self.appearance_mode=self.appearance_mode if self.appearance_mode in {'system','light','dark'} else 'system'
         except (OSError,ValueError,TypeError): pass
         token=core.DATA/'tmdb-token.txt'
         try:
@@ -424,7 +456,7 @@ class Controller(QObject):
         self.proxy.field=core.VIEW_SORT_FIELDS.get(self.sort_by,'file'); self.proxy.sort(0,Qt.SortOrder.DescendingOrder if self.descending else Qt.SortOrder.AscendingOrder)
     def save(self):
         core.DATA.mkdir(parents=True,exist_ok=True)
-        (core.DATA/'settings.json').write_text(json.dumps(dict(source=self.source,library=self.destination,reject_folder=self.reject_folder,in_place=self.in_place,sorting=self.options.to_dict(),auto_cleanup=self.auto_cleanup,media_filter=self.proxy.kind,sort_by=self.sort_by,descending=self.descending,audio_output_device=self.audio_device_id,dark_mode=self.dark_mode)),encoding='utf-8')
+        (core.DATA/'settings.json').write_text(json.dumps(dict(source=self.source,library=self.destination,reject_folder=self.reject_folder,in_place=self.in_place,sorting=self.options.to_dict(),auto_cleanup=self.auto_cleanup,media_filter=self.proxy.kind,sort_by=self.sort_by,descending=self.descending,audio_output_device=self.audio_device_id,appearance=self.appearance_mode,dark_mode=self.dark_mode)),encoding='utf-8')
     def read_progress(self):
         try:
             progress = json.loads((core.DATA / 'progress.json').read_text(encoding='utf-8'))

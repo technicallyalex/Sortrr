@@ -12,7 +12,7 @@ Sortrr identifies movies and TV episodes and organizes them for Plex, Jellyfin, 
 - Copy or move files using media server presets. Rename media and carry matching subtitles along.
 - Preserve bonus videos in extras folders and review their movie or show associations.
 - Track scanning with overall progress and per-file queued and identifying indicators.
-- Use light or dark mode with a browser-style title strip and dedicated window controls.
+- Follow Windows appearance or choose light or dark mode, with a browser-style title strip and dedicated window controls.
 - Check for updates in Settings and install verified updates automatically. See cache size and choose its storage folder.
 - Review source cleanup, handle rejected files, and save your place between sessions.
 - Search change history by file name or path and restore a file to its original name and folder.

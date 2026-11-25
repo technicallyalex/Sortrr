@@ -78,7 +78,8 @@ def build(dist):
         encoding="utf-8",
     )
     (package / "Read me.txt").write_text(
-        "Sortrr for 64-bit Windows\n\n"
+        f"Sortrr {VERSION} for 64-bit Windows\n\n"
+        "Release candidate: still in testing. Try test files or a backed-up library first.\n\n"
         "Extract the entire ZIP. Open Sortrr.exe and keep the _internal folder beside it.\n"
         "Python, Qt, FFmpeg and ffprobe are bundled.\n"
         "Settings, match history and logs are stored under %LOCALAPPDATA%\\Sortrr.\n"

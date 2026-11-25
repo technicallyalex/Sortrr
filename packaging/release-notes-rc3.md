@@ -2,6 +2,7 @@
 
 Sortrr is still in testing. Try a small set of test files or a backed-up library before moving, renaming, or cleaning up media.
 
+- Added System, Light, and Dark appearance options. System follows Windows automatically, including changes while Sortrr is running.
 - Added a compact browser-style title strip for dragging, with a rounded control tab and the app header below.
 - Added a Check for updates button in Settings and automatic installation of verified updates, with rollback if the new app cannot start.
 - Added cache size reporting and a native folder picker to move the cache. Settings, saved matches, review progress, and change history stay in the app data folder.
@@ -17,6 +18,4 @@ Settings and change history are kept in %LOCALAPPDATA%\Sortrr.
 
 ## Validation
 
-149 automated tests passed, including window shape and hit-region checks, plus UI checks for the browser-style title strip, Settings, updates, cache relocation, scan progress, and related media. The portable package was also checked for startup and bundled dependencies.
-
-This candidate is prepared locally for review and has not been published.
+149 automated tests passed, including window shape and hit-region checks, plus UI checks for the browser-style title strip, Settings, system appearance and preference migration, updates, cache relocation, scan progress, and related media. The portable package was also checked for startup and bundled dependencies.

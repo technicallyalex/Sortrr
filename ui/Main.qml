@@ -12,7 +12,7 @@ ApplicationWindow {
     title: "Sortrr"
     flags: Qt.Window | Qt.FramelessWindowHint | Qt.WindowSystemMenuHint
         | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint
-    color: Theme.canvas
+    color: "transparent"
     font.family: "Segoe UI"
     palette.window: Theme.surface
     palette.windowText: Theme.ink
@@ -147,16 +147,25 @@ ApplicationWindow {
         }
     }
 
+    Rectangle {
+        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+        anchors.top: parent.top; anchors.topMargin: 48
+        color: Theme.canvas
+        radius: 8
+        z: -1
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
         TitleBar {
+            id: mainChrome
             objectName: "mainTitleBar"
             Layout.fillWidth: true
-            implicitHeight: 76
+            implicitHeight: 116
             targetWindow: window
             headerContent: RowLayout {
-                anchors.fill: parent; anchors.leftMargin: 24; anchors.rightMargin: 8; spacing: 12
+                anchors.fill: parent; anchors.leftMargin: 24; anchors.rightMargin: 24; spacing: 12
                 RowLayout {
                     spacing: 10
                     Image { source: "assets/sortrr.png"; Layout.preferredWidth: 36; Layout.preferredHeight: 36; fillMode: Image.PreserveAspectFit }
@@ -623,7 +632,7 @@ ApplicationWindow {
             }
         }
     }
-    WindowFrame { targetWindow: window }
+    WindowFrame { targetWindow: window; tabWidth: mainChrome.tabWidth }
     SettingsWindow {
         id: settings
         transientParent: window

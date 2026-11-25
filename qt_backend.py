@@ -13,6 +13,7 @@ import core
 import related_media
 import updates
 import cache_storage
+import window_chrome  # Registers the native folder-window mask for QML.
 from app_paths import FROZEN
 from app_version import VERSION
 from previews import PreviewManager,timestamp

@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Window
 import "."
 
-Rectangle {
+Item {
     id: bar
     required property var targetWindow
     property alias headerContent: headerSlot.data
@@ -11,8 +11,39 @@ Rectangle {
     property bool allowMaximize: true
     property bool closeEnabled: true
     readonly property bool maximized: targetWindow.visibility === Window.Maximized
-    implicitHeight: 36
-    color: Theme.surface
+    property int tabHeight: 40
+    readonly property int tabWidth: windowButtons.width + 40
+    implicitHeight: 116
+
+    onTabWidthChanged: headerSurface.requestPaint()
+    Canvas {
+        id: headerSurface
+        anchors.fill: parent
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+        onPaint: {
+            let ctx = getContext("2d")
+            let w = width, t = bar.tabHeight, x = w - bar.tabWidth
+            ctx.clearRect(0, 0, width, height)
+            ctx.beginPath()
+            ctx.moveTo(8, t)
+            ctx.lineTo(x - 18, t)
+            ctx.bezierCurveTo(x - 4, t, x - 8, 0, x + 10, 0)
+            ctx.lineTo(w - 8, 0)
+            ctx.quadraticCurveTo(w, 0, w, 8)
+            ctx.lineTo(w, height)
+            ctx.lineTo(0, height)
+            ctx.lineTo(0, t + 8)
+            ctx.quadraticCurveTo(0, t, 8, t)
+            ctx.closePath()
+            ctx.fillStyle = Theme.surface
+            ctx.fill()
+        }
+        Connections {
+            target: Theme
+            function onDarkChanged() { headerSurface.requestPaint() }
+        }
+    }
 
     function toggleMaximized() {
         if (!allowMaximize) return
@@ -23,7 +54,7 @@ Rectangle {
     Item {
         objectName: "titleBarDragArea"
         anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-        anchors.right: windowButtons.left
+        anchors.right: parent.right
         DragHandler {
             target: null
             acceptedButtons: Qt.LeftButton
@@ -43,16 +74,16 @@ Rectangle {
 
     Item {
         id: headerSlot
-        anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-        anchors.right: windowButtons.left
-        anchors.rightMargin: 12
+        anchors.left: parent.left; anchors.bottom: parent.bottom
+        anchors.top: parent.top; anchors.topMargin: bar.tabHeight
+        anchors.right: parent.right
     }
 
     component WindowButton: Button {
         id: control
         required property string windowAction
         implicitWidth: 46
-        implicitHeight: 40
+        implicitHeight: 30
         hoverEnabled: true
         padding: 0
         Accessible.name: text
@@ -111,8 +142,8 @@ Rectangle {
     Row {
         id: windowButtons
         anchors.right: parent.right; anchors.rightMargin: 8
-        anchors.verticalCenter: parent.verticalCenter
-        height: 40
+        anchors.top: parent.top; anchors.topMargin: 5
+        height: 30
         spacing: 2
         WindowButton {
             objectName: "windowMinimizeButton"

@@ -14,7 +14,7 @@ ApplicationWindow {
     height: Math.min(760, Screen.height - 100)
     minimumWidth: 530
     minimumHeight: Math.min(580, Screen.height - 100)
-    color: Theme.canvas
+    color: "transparent"
     font.family: "Segoe UI"
 
     required property var backend
@@ -52,14 +52,23 @@ ApplicationWindow {
         wrapMode: Text.Wrap
     }
 
+    Rectangle {
+        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+        anchors.top: parent.top; anchors.topMargin: 48
+        color: Theme.canvas
+        radius: 8
+        z: -1
+    }
+
     ColumnLayout {
         id: content
         anchors.fill: parent
         spacing: 0
         TitleBar {
+            id: settingsChrome
             objectName: "settingsTitleBar"
             Layout.fillWidth: true
-            implicitHeight: 88
+            implicitHeight: 128
             targetWindow: settings
             allowMinimize: false
             allowMaximize: false
@@ -176,7 +185,7 @@ ApplicationWindow {
                         }
                         ActionButton {
                             objectName: "checkUpdatesButton"
-                            text: settings.update.status === "checking" ? "Checking…" : "Check for updates"
+                            text: settings.update.status === "checking" ? "Checkingâ€¦" : "Check for updates"
                             enabled: !settings.backend.state.busy && !settings.updating
                             onClicked: settings.backend.checkForUpdates()
                         }
@@ -221,7 +230,7 @@ ApplicationWindow {
                         SettingTitle { text: "Cache storage" }
                         Label {
                             objectName: "cacheSizeText"
-                            text: settings.cache.measuring ? "Calculating…" : settings.cache.size
+                            text: settings.cache.measuring ? "Calculatingâ€¦" : settings.cache.size
                             color: Theme.ink; font.pixelSize: 16; font.weight: Font.DemiBold
                         }
                         ActionButton {
@@ -243,7 +252,7 @@ ApplicationWindow {
                         Layout.fillWidth: true; spacing: 8
                         ActionButton {
                             objectName: "changeCacheDirectoryButton"
-                            text: settings.cache.moving ? "Moving cache…" : "Change folder"
+                            text: settings.cache.moving ? "Moving cacheâ€¦" : "Change folder"
                             enabled: !settings.backend.state.busy
                             onClicked: settings.backend.chooseCacheDirectory()
                         }
@@ -291,6 +300,6 @@ ApplicationWindow {
             }
         }
     }
-    WindowFrame { targetWindow: settings }
+    WindowFrame { targetWindow: settings; tabWidth: settingsChrome.tabWidth }
 
 }

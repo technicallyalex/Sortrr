@@ -15,6 +15,20 @@ Item {
     readonly property int tabWidth: windowButtons.width + 26
     implicitHeight: 90
 
+    // A continuous, quiet backdrop makes the caption tab feel anchored
+    // and provides a generous drag target without repeating the app name.
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.raised
+        radius: 8
+    }
+    Rectangle {
+        anchors.left: parent.left; anchors.right: parent.right
+        anchors.top: parent.top; anchors.topMargin: bar.tabHeight
+        anchors.bottom: parent.bottom
+        color: Theme.surface
+    }
+
     onTabWidthChanged: headerSurface.requestPaint()
     Canvas {
         id: headerSurface

@@ -54,7 +54,7 @@ ApplicationWindow {
 
     Rectangle {
         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-        anchors.top: parent.top; anchors.topMargin: 48
+        anchors.top: parent.top; anchors.topMargin: 34
         color: Theme.canvas
         radius: 8
         z: -1
@@ -68,7 +68,7 @@ ApplicationWindow {
             id: settingsChrome
             objectName: "settingsTitleBar"
             Layout.fillWidth: true
-            implicitHeight: 128
+            implicitHeight: 98
             targetWindow: settings
             allowMinimize: false
             allowMaximize: false
@@ -185,7 +185,7 @@ ApplicationWindow {
                         }
                         ActionButton {
                             objectName: "checkUpdatesButton"
-                            text: settings.update.status === "checking" ? "Checkingâ€¦" : "Check for updates"
+                            text: settings.update.status === "checking" ? "CheckingÃ¢â‚¬Â¦" : "Check for updates"
                             enabled: !settings.backend.state.busy && !settings.updating
                             onClicked: settings.backend.checkForUpdates()
                         }
@@ -230,7 +230,7 @@ ApplicationWindow {
                         SettingTitle { text: "Cache storage" }
                         Label {
                             objectName: "cacheSizeText"
-                            text: settings.cache.measuring ? "Calculatingâ€¦" : settings.cache.size
+                            text: settings.cache.measuring ? "CalculatingÃ¢â‚¬Â¦" : settings.cache.size
                             color: Theme.ink; font.pixelSize: 16; font.weight: Font.DemiBold
                         }
                         ActionButton {
@@ -252,7 +252,7 @@ ApplicationWindow {
                         Layout.fillWidth: true; spacing: 8
                         ActionButton {
                             objectName: "changeCacheDirectoryButton"
-                            text: settings.cache.moving ? "Moving cacheâ€¦" : "Change folder"
+                            text: settings.cache.moving ? "Moving cacheÃ¢â‚¬Â¦" : "Change folder"
                             enabled: !settings.backend.state.busy
                             onClicked: settings.backend.chooseCacheDirectory()
                         }

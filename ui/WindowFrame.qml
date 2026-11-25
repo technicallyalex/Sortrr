@@ -13,8 +13,8 @@ Item {
     readonly property bool resizable: targetWindow.visibility !== Window.Maximized
         && targetWindow.visibility !== Window.FullScreen
 
-    property real tabWidth: 182
-    property real tabHeight: 40
+    property real tabWidth: 132
+    property real tabHeight: 26
     WindowShape {
         targetWindow: frame.targetWindow
         tabWidth: frame.tabWidth
@@ -22,6 +22,7 @@ Item {
     }
     Canvas {
         id: outline
+        antialiasing: true
         anchors.fill: parent
         onWidthChanged: requestPaint()
         onHeightChanged: requestPaint()

@@ -1,6 +1,6 @@
 """Native hit-test region for Sortrr's folder-shaped windows."""
 from PySide6.QtCore import QObject, Property, Signal
-from PySide6.QtGui import QPainterPath, QRegion
+from PySide6.QtGui import QPainterPath, QPainterPathStroker, QRegion
 from PySide6.QtQml import QmlElement
 
 QML_IMPORT_NAME = "Sortrr.Native"
@@ -34,16 +34,20 @@ class WindowShape(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._window = None
-        self._tab_width = 184.0
-        self._tab_height = 40.0
+        self._tab_width = 132.0
+        self._tab_height = 26.0
 
     def update_mask(self):
         if self._window is not None:
             w, h = self._window.width(), self._window.height()
             if w > 0 and h > 0:
-                self._window.setMask(QRegion(folder_path(
-                    w, h, self._tab_width, self._tab_height
-                ).toFillPolygon().toPolygon()))
+                path = folder_path(w, h, self._tab_width, self._tab_height)
+                # A native region has binary edges. Keep it just outside the
+                # painted contour so it cannot clip the antialiased pixels.
+                padding = QPainterPathStroker()
+                padding.setWidth(4.0)
+                hit_path = path.united(padding.createStroke(path))
+                self._window.setMask(QRegion(hit_path.toFillPolygon().toPolygon()))
 
     def get_window(self):
         return self._window

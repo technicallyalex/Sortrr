@@ -149,7 +149,7 @@ ApplicationWindow {
 
     Rectangle {
         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-        anchors.top: parent.top; anchors.topMargin: 48
+        anchors.top: parent.top; anchors.topMargin: 34
         color: Theme.canvas
         radius: 8
         z: -1
@@ -162,7 +162,7 @@ ApplicationWindow {
             id: mainChrome
             objectName: "mainTitleBar"
             Layout.fillWidth: true
-            implicitHeight: 116
+            implicitHeight: 90
             targetWindow: window
             headerContent: RowLayout {
                 anchors.fill: parent; anchors.leftMargin: 24; anchors.rightMargin: 24; spacing: 12

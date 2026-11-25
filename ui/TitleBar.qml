@@ -11,13 +11,14 @@ Item {
     property bool allowMaximize: true
     property bool closeEnabled: true
     readonly property bool maximized: targetWindow.visibility === Window.Maximized
-    property int tabHeight: 40
-    readonly property int tabWidth: windowButtons.width + 40
-    implicitHeight: 116
+    property int tabHeight: 26
+    readonly property int tabWidth: windowButtons.width + 26
+    implicitHeight: 90
 
     onTabWidthChanged: headerSurface.requestPaint()
     Canvas {
         id: headerSurface
+        antialiasing: true
         anchors.fill: parent
         onWidthChanged: requestPaint()
         onHeightChanged: requestPaint()
@@ -82,13 +83,13 @@ Item {
     component WindowButton: Button {
         id: control
         required property string windowAction
-        implicitWidth: 46
-        implicitHeight: 30
+        implicitWidth: 34
+        implicitHeight: 24
         hoverEnabled: true
         padding: 0
         Accessible.name: text
         background: Rectangle {
-            radius: 6
+            radius: 4
             color: control.hovered || control.down
                 ? control.windowAction === "close" ? (control.down ? "#ad2939" : "#c43c4b") : Theme.raised
                 : "transparent"
@@ -141,9 +142,9 @@ Item {
 
     Row {
         id: windowButtons
-        anchors.right: parent.right; anchors.rightMargin: 8
-        anchors.top: parent.top; anchors.topMargin: 5
-        height: 30
+        anchors.right: parent.right; anchors.rightMargin: 4
+        anchors.top: parent.top; anchors.topMargin: 1
+        height: 24
         spacing: 2
         WindowButton {
             objectName: "windowMinimizeButton"

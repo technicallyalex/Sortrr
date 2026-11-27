@@ -319,10 +319,36 @@ ApplicationWindow {
                                     wrapMode: Text.WrapAnywhere; color: Theme.ink; font.pixelSize: 12
                                 }
                                 SettingDetail {
-                                    text: (!modelData.enabled || settings.watch.paused ? "Paused" : modelData.status)
-                                          + (modelData.pending ? " | " + modelData.pending + " to review" : "")
+                                    text: !modelData.enabled || settings.watch.paused ? "Paused" : modelData.status
                                     textFormat: Text.PlainText
                                     font.pixelSize: 12
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+                                    Repeater {
+                                        model: [
+                                            {label: "Waiting", count: modelData.waiting, tone: Theme.muted},
+                                            {label: "Queued", count: modelData.queued, tone: Theme.muted},
+                                            {label: "Scanning", count: modelData.scanning, tone: Theme.accentInk},
+                                            {label: "Ready to review", count: modelData.readyToReview, tone: Theme.success}
+                                        ]
+                                        delegate: ColumnLayout {
+                                            required property var modelData
+                                            Layout.fillWidth: true; Layout.preferredWidth: 1
+                                            spacing: 1
+                                            Label {
+                                                text: modelData.count
+                                                color: modelData.tone
+                                                font.pixelSize: 19; font.weight: Font.DemiBold
+                                            }
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: modelData.label; color: Theme.muted
+                                                font.pixelSize: 11; wrapMode: Text.WordWrap
+                                            }
+                                        }
+                                    }
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true

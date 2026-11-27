@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from watch_folders import StableIndex, inventory, atomic_json
+from watch_folders import StableIndex, inventory, atomic_json, folder_counts
 import json
 
 
@@ -75,3 +75,21 @@ class WatchInventoryTests(unittest.TestCase):
             atomic_json(path, {"b": [2, 3]})
             self.assertEqual(json.loads(path.read_text()), {"b": [2, 3]})
             self.assertFalse(path.with_suffix(".tmp").exists())
+
+
+class WatchCountTests(unittest.TestCase):
+    def test_counts_separate_changed_pending_files_and_finished_scans(self):
+        counts = folder_counts(["old", "changed"], dict(
+            waiting=1, queued=2, scanning=3,
+            unprocessed=frozenset(["changed", "new"]),
+            completed=["new"], present={"old", "changed", "new"}))
+        self.assertEqual(counts, dict(waiting=1, queued=2, scanning=3, readyToReview=2, pending=2))
+
+    def test_finished_files_are_not_double_counted_and_missing_files_are_hidden(self):
+        counts = folder_counts(["old", "gone"], dict(completed=["old"], present={"old"}))
+        self.assertEqual(counts["readyToReview"], 1)
+
+    def test_saved_inbox_is_shown_before_first_reconciliation(self):
+        counts = folder_counts(["one", "two"], {})
+        self.assertEqual(counts["readyToReview"], 2)
+        self.assertEqual((counts["waiting"], counts["queued"], counts["scanning"]), (0, 0, 0))

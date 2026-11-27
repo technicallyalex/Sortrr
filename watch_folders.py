@@ -78,11 +78,21 @@ class StableIndex:
         self.observed.pop(path, None)
 
 
+def folder_counts(pending, activity):
+    """Keep the review inbox distinct from files still waiting or scanning."""
+    pending = set(pending)
+    if "present" in activity:
+        pending.intersection_update(activity["present"])
+    ready = pending.difference(activity.get("unprocessed", ())) | set(activity.get("completed", []))
+    return dict(waiting=activity.get("waiting", 0), queued=activity.get("queued", 0),
+                scanning=activity.get("scanning", 0), readyToReview=len(ready), pending=len(ready))
+
+
 class WatchFolders(QObject):
     changed = Signal()
     notification = Signal(str, str)
     completed = Signal(object)
-    progress = Signal(str, str)
+    progress = Signal(str, object)
 
     def __init__(self, data, parent=None):
         super().__init__(parent)
@@ -115,6 +125,7 @@ class WatchFolders(QObject):
             seen = {}
         self.index = StableIndex(seen if isinstance(seen, dict) else {})
         self.statuses = {}
+        self.activity = {}
         self.exclusions = lambda: []
         self.blocked = lambda: False
         self.completed.connect(self.finish)
@@ -131,7 +142,8 @@ class WatchFolders(QObject):
         return dict(self.config, busy=self.busy, message=self.message, folders=[
             dict(row, status=self.statuses.get(row["path"],
                  "Watching" if row.get("enabled", True) else "Paused"),
-                 pending=row.get("pending", 0)) for row in self.config["folders"]])
+                 **folder_counts(row.get("pending_files", []), self.activity.get(row["path"], {})))
+                 for row in self.config["folders"]])
 
     def add(self, path):
         root = Path(path).expanduser().resolve()
@@ -183,7 +195,11 @@ class WatchFolders(QObject):
     def set_status(self, path, text):
         if self.closed.is_set():
             return
-        self.statuses[path] = text
+        if isinstance(text, dict):
+            self.statuses[path] = text["status"]
+            self.activity[path] = {key: value for key, value in text.items() if key != "status"}
+        else:
+            self.statuses[path] = text
         self.changed.emit()
 
     def poll(self):
@@ -204,10 +220,20 @@ class WatchFolders(QObject):
                 try:
                     self.progress.emit(root, "Checking for new or changed media...")
                     snapshot = inventory(root, exclusions)
-                    paths = self.index.ready(snapshot, time.monotonic(), time.time(), scope=root)[:32]
+                    ready = self.index.ready(snapshot, time.monotonic(), time.time(), scope=root)
+                    paths = ready[:32]
+                    unprocessed = frozenset(p for p, sig in snapshot.items() if self.index.seen.get(p) != sig)
+                    present = frozenset(snapshot)
+                    waiting = len(unprocessed) - len(ready)
+                    active, started, completed = set(), set(), set()
+                    def publish(status):
+                        self.progress.emit(root, dict(status=status, waiting=waiting,
+                            queued=len(ready) - len(started), scanning=len(active),
+                            completed=tuple(completed), unprocessed=unprocessed, present=present))
                     if not paths:
-                        waiting = sum(self.index.seen.get(p) != sig for p, sig in snapshot.items())
-                        result.append((root, 0, "Waiting for files to finish copying" if waiting else "Watching"))
+                        status = "Waiting for files to settle" if waiting else "Watching"
+                        publish(status)
+                        result.append((root, [], status))
                         continue
                     media = []
                     for path in paths:
@@ -215,14 +241,28 @@ class WatchFolders(QObject):
                             media.append(core.parse(Path(path)))
                         except OSError:
                             pass
-                    self.progress.emit(root, f"Identifying 0 / {len(media)}")
-                    count = 0
+                    publish("Scanning new or updated files")
                     lock = threading.Lock()
-                    def report(uid, item):
-                        nonlocal count
+                    def began(uid):
                         with lock:
-                            count += 1
-                            self.progress.emit(root, f"Identifying {count} / {len(media)}: {item.source.name}")
+                            path = str(media[uid].source)
+                            active.add(path)
+                            started.add(path)
+                            publish("Scanning new or updated files")
+                    def report(uid, item):
+                        nonlocal waiting
+                        with lock:
+                            path = str(item.source)
+                            active.discard(path)
+                            try:
+                                stat = item.source.stat()
+                                if [stat.st_size, stat.st_mtime_ns] == snapshot[path]:
+                                    completed.add(path)
+                                else:
+                                    waiting += 1
+                            except OSError:
+                                pass
+                            publish("Scanned: " + item.source.name)
                     closing = self.closed
                     class CancellableCatalog(core.Catalog):
                         def identify(self, item):
@@ -230,7 +270,7 @@ class WatchFolders(QObject):
                                 raise InterruptedError("Background scan stopped")
                             return super().identify(item)
                     core.identify_batch(enumerate(media), CancellableCatalog(), core.History(),
-                                        report=report, finish_scan_on_setup=True)
+                                        started=began, report=report, finish_scan_on_setup=True)
                     if self.closed.is_set():
                         break
                     previous_seen = dict(self.index.seen)
@@ -249,9 +289,18 @@ class WatchFolders(QObject):
                     except OSError:
                         self.index.seen = previous_seen
                         raise
-                    result.append((root, accepted, f"{len(accepted)} new or updated files scanned"))
+                    unprocessed = unprocessed.difference(accepted)
+                    completed.intersection_update(accepted)
+                    active.clear()
+                    status = ("Waiting for files to settle" if waiting else
+                              "Files queued for scanning" if len(ready) > len(started) else "Watching")
+                    publish(status)
+                    result.append((root, accepted, status))
                 except Exception as exc:
-                    result.append((root, 0, "Could not check folder: " + str(exc)))
+                    status = "Could not check folder: " + str(exc)
+                    self.progress.emit(root, dict(status=status, waiting=0, queued=0,
+                        scanning=0, completed=[], unprocessed=[]))
+                    result.append((root, [], status))
             return result
         future = self.pool.submit(job)
         def finished(future):
@@ -270,6 +319,7 @@ class WatchFolders(QObject):
             if row is None:
                 continue
             self.statuses[path] = status
+            self.activity.get(path, {}).update(completed=())
             if paths:
                 row["pending_files"] = sorted(set(row.get("pending_files", [])) | set(paths))
                 row["pending"] = len(row["pending_files"])

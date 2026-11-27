@@ -75,7 +75,7 @@ class BackgroundMode(QObject):
         enabled = bool(self.controller.watch.config["background"]) and self.available
         self.tray.setVisible(enabled)
         self.pause_action.setChecked(self.controller.watch.config["paused"])
-        total = sum(row.get("pending", 0) for row in self.controller.watch.config["folders"])
+        total = sum(row["readyToReview"] for row in self.controller.watch.state()["folders"])
         self.review_action.setEnabled(total > 0 and not self.controller.busy and not self.controller.watch.busy)
         self.tray.setToolTip("Sortrr - Watch folders paused" if self.controller.watch.config["paused"] else f"Sortrr - {total} new or updated files to review" if total else "Sortrr - Watching media folders")
         # Disabling background mode must never strand a hidden window.
@@ -120,9 +120,9 @@ class BackgroundMode(QObject):
 
     def review(self):
         self.show()
-        roots = self.controller.watch.config["folders"]
-        path = self.notification_root if any(r["path"] == self.notification_root for r in roots) else next(
-            (r["path"] for r in roots if r.get("pending", 0)), "")
+        roots = self.controller.watch.state()["folders"]
+        path = self.notification_root if any(r["path"] == self.notification_root and r["readyToReview"] for r in roots) else next(
+            (r["path"] for r in roots if r["readyToReview"]), "")
         if path:
             self.controller.reviewWatchFolder(path)
 

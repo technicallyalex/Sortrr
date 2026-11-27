@@ -71,12 +71,17 @@ ApplicationWindow {
         noticeTimer.restart()
     }
     onClosing: function(event) {
+        if (controller.hideToTray()) {
+            event.accepted = false
+            return
+        }
         if (s.busy) {
             event.accepted = false
             showNotice("Wait for the current operation to finish.")
             return
         }
         controller.shutdown()
+        Qt.quit()
     }
 
     component Card: Rectangle { color: Theme.surface; radius: 15; border.color: window.line }
@@ -761,6 +766,10 @@ ApplicationWindow {
     Connections {
         target: controller
         function onToast(message) { window.showNotice(message) }
+        function onOpenSettingsRequested() {
+            settings.show()
+            settings.requestActivate()
+        }
         function onScanStarted() {
             notice.close()
             controller.setReviewView("all")

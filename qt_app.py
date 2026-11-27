@@ -10,6 +10,8 @@ from PySide6.QtWidgets import QApplication
 
 from qt_backend import Controller
 from app_version import VERSION
+from background_mode import BackgroundMode, InstanceGate
+from app_paths import data_directory
 
 
 def create_engine(controller):
@@ -25,10 +27,19 @@ def main():
     app.setApplicationName("Sortrr")
     app.setApplicationVersion(VERSION)
     app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent / "ui" / "assets" / "sortrr.png")))
+    instance = InstanceGate(data_directory())
+    if instance.forwarded:
+        return 0
     controller = Controller()
     app.aboutToQuit.connect(controller.shutdown)
     engine = create_engine(controller)
-    return app.exec() if engine.rootObjects() else 1
+    if not engine.rootObjects():
+        controller.shutdown()
+        return 1
+    app.setQuitOnLastWindowClosed(False)
+    background = BackgroundMode(controller, engine.rootObjects()[0])
+    instance.requested.connect(background.show)
+    return app.exec()
 
 
 if __name__ == "__main__":

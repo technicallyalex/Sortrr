@@ -13,6 +13,7 @@ import core
 import related_media
 import updates
 import cache_storage
+from watch_folders import WatchFolders
 import window_chrome  # Registers the native folder-window mask for QML.
 from app_paths import FROZEN
 from app_version import VERSION
@@ -90,6 +91,8 @@ class Controller(QObject):
     invoke=Signal(object); stateChanged=Signal(); wizardChanged=Signal(); playbackChanged=Signal()
     darkModeChanged = Signal()
     appearanceChanged = Signal()
+    watchChanged = Signal()
+    openSettingsRequested = Signal()
     updateChanged = Signal()
     cacheChanged = Signal()
     changeHistoryChanged = Signal()
@@ -149,6 +152,80 @@ class Controller(QObject):
         self.apply_appearance()
         self.refresh_audio_outputs()
         self.saved_progress = self.read_progress()
+        self.tray_handler = None
+        self.watch = WatchFolders(core.DATA, self)
+        self.watch.changed.connect(self.watchChanged.emit)
+        self.watch.notification.connect(lambda path, message: self.toast.emit(message) if self.watch.config['notifications'] else None)
+        self.watch.blocked = lambda: self.busy or self.pending is not None or self.closed or self.update_info['status'] in {'checking','downloading','installing'}
+        self.watch.exclusions = self.watch_exclusions
+    def watch_exclusions(self):
+        paths = [self.destination, self.reject_folder, str(core.DATA), str(cache_storage.root(core.DATA))]
+        for row in self.watch.config['folders']:
+            paths.append(str(Path(row['path']) / '.sortrr-cleanup'))
+            if self.in_place and self.source and Path(self.source) == Path(row['path']):
+                paths.extend(str(Path(row['path']) / name) for name in ('Movies','TV Shows'))
+        return [path for path in paths if path]
+
+    @Property('QVariantMap', notify=watchChanged)
+    def watchInfo(self):
+        from PySide6.QtWidgets import QSystemTrayIcon
+        return dict(self.watch.state(), trayAvailable=QSystemTrayIcon.isSystemTrayAvailable())
+
+    @Slot()
+    def addWatchFolder(self):
+        if self.busy:
+            return
+        path = QFileDialog.getExistingDirectory(None, 'Choose a watch folder', self.source)
+        if path:
+            try:
+                self.watch.add(path)
+            except (OSError, ValueError) as exc:
+                self.toast.emit(str(exc))
+
+    @Slot(str)
+    def removeWatchFolder(self, path):
+        try:
+            self.watch.remove(path)
+        except OSError as exc:
+            self.toast.emit(str(exc))
+
+    @Slot(str, bool)
+    def enableWatchFolder(self, path, enabled):
+        self.watch.enable(path, enabled)
+
+    @Slot(str, bool)
+    def setWatchOption(self, name, enabled):
+        try:
+            self.watch.option(name, enabled)
+        except OSError as exc:
+            self.toast.emit(str(exc))
+
+    @Slot()
+    def checkWatchFolders(self):
+        if self.watch.config['paused']:
+            self.toast.emit('Resume watch folders before checking for changes.')
+            return
+        self.watch.poll()
+
+    @Slot(str)
+    def reviewWatchFolder(self, path):
+        if self.w.get('open') or self.pending is not None:
+            self.toast.emit('Close the current dialog or review wizard before opening a watch folder.')
+            return
+        if self.busy or self.watch.busy:
+            self.toast.emit('Wait for the current scan or operation to finish.')
+            return
+        if not any(row['path'] == path for row in self.watch.config['folders']):
+            return
+        if self.items and not self.saveProgress('review','all','leave'):
+            return
+        self.setPath('source', path)
+        self.scan()
+
+    @Slot(result=bool)
+    def hideToTray(self):
+        return bool(self.tray_handler and self.tray_handler.hide())
+
     @Slot(object)
     def deliver(self,fn):
         if self.closed: return
@@ -298,6 +375,9 @@ class Controller(QObject):
 
     @Slot()
     def chooseCacheDirectory(self):
+        if self.watch.busy:
+            self.toast.emit('Wait for the background scan to finish before moving the cache.')
+            return
         if self.busy:
             return
         folder=QFileDialog.getExistingDirectory(None,'Choose cache folder',str(cache_storage.root(core.DATA)))
@@ -306,6 +386,9 @@ class Controller(QObject):
 
     @Slot(str)
     def moveCacheDirectory(self,folder):
+        if self.watch.busy:
+            self.toast.emit('Wait for the background scan to finish before moving the cache.')
+            return
         if self.busy:
             return
         destination=Path(folder).expanduser().absolute()
@@ -819,6 +902,8 @@ class Controller(QObject):
                 self.status+=f" Found {len(self.related)} bonus videos."
                 if unassigned:
                     self.status+=f" {unassigned} need an association in Related media."
+            if any(row['path'] == str(src) for row in self.watch.config['folders']):
+                self.watch.reviewed(str(src))
         self.work(job,done)
         self.scanStarted.emit()
     def scan_started_item(self,uid):
@@ -1252,6 +1337,9 @@ class Controller(QObject):
 
     @Slot(str)
     def prepare(self,action):
+        if action == 'clear' and self.watch.busy:
+            self.toast.emit('Wait for the background scan to finish before clearing the cache.')
+            return
         if self.busy: return
         if action=='sort':
             self.prepareSort('visible')
@@ -1288,6 +1376,9 @@ class Controller(QObject):
 
     @Slot(str,'QVariantList',bool)
     def confirm(self,action,paths,remove_empty):
+        if action == 'clear' and self.watch.busy:
+            self.toast.emit('Wait for the background scan to finish before clearing the cache.')
+            return
         if self.busy or not self.pending or self.pending[0]!=action: return
         payload=self.pending[1]; self.pending=None
         def job():
@@ -1784,4 +1875,5 @@ class Controller(QObject):
     @Slot()
     def shutdown(self):
         if self.closed: return
+        self.watch.close()
         self.closed=True; self.player.stop(); self.player.setSource(QUrl()); self.previews.close(); self.ops.shutdown(wait=False,cancel_futures=True); self.details_pool.shutdown(wait=False,cancel_futures=True)

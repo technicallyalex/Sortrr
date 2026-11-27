@@ -18,6 +18,7 @@ ApplicationWindow {
     font.family: "Segoe UI"
 
     required property var backend
+    readonly property var watch: backend.watchInfo
     readonly property var cache: backend.cacheInfo
     readonly property var update: backend.updateState
     readonly property bool updating: update.status === "checking" || update.status === "downloading" || update.status === "installing"
@@ -118,6 +119,123 @@ ApplicationWindow {
                         currentIndex: ["system", "light", "dark"].indexOf(settings.backend.appearance)
                         enabled: !settings.backend.state.busy
                         onActivated: settings.backend.setAppearance(["system", "light", "dark"][currentIndex])
+                    }
+                }
+            }
+
+            SettingCard {
+                objectName: "watchFoldersCard"
+                implicitHeight: watchContent.implicitHeight + 32
+                ColumnLayout {
+                    id: watchContent
+                    anchors.fill: parent; anchors.margins: 16
+                    spacing: 8
+                    RowLayout {
+                        Layout.fillWidth: true
+                        SettingTitle { text: "Watch folders"; Layout.fillWidth: true }
+                        ActionButton {
+                            objectName: "addWatchFolderButton"
+                            text: "Add folder"
+                            enabled: !settings.backend.state.busy
+                            onClicked: settings.backend.addWatchFolder()
+                        }
+                    }
+                    SettingDetail {
+                        text: "Automatically identify new or changed media in these folders and their subfolders. Files must be unchanged for 60 seconds before scanning."
+                    }
+                    ChoiceCheck {
+                        objectName: "backgroundModeOption"
+                        Layout.fillWidth: true
+                        text: "Keep running in the system tray when I close Sortrr"
+                        checked: settings.watch.background
+                        enabled: settings.watch.trayAvailable
+                        onToggled: settings.backend.setWatchOption("background", checked)
+                    }
+                    SettingDetail {
+                        text: settings.watch.trayAvailable
+                            ? "Open, pause, review files, check for updates, or quit from the tray icon."
+                            : "The system tray is unavailable. Sortrr will stay visible."
+                        font.pixelSize: 12
+                    }
+                    ChoiceCheck {
+                        objectName: "watchNotificationsOption"
+                        text: "Notify me when new files are ready to review"
+                        checked: settings.watch.notifications
+                        onToggled: settings.backend.setWatchOption("notifications", checked)
+                    }
+                    SettingDetail {
+                        visible: !settings.watch.background && settings.watch.notifications
+                        text: "Notifications appear in Sortrr. Enable tray mode for Windows notifications while the window is closed."
+                        font.pixelSize: 12
+                    }
+                    Repeater {
+                        model: settings.watch.folders
+                        delegate: Rectangle {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            implicitHeight: folderContent.implicitHeight + 20
+                            color: Theme.field; radius: 8; border.color: Theme.line
+                            ColumnLayout {
+                                id: folderContent
+                                anchors.fill: parent; anchors.margins: 10; spacing: 6
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: modelData.path; textFormat: Text.PlainText
+                                    wrapMode: Text.WrapAnywhere; color: Theme.ink; font.pixelSize: 12
+                                }
+                                SettingDetail {
+                                    text: (!modelData.enabled || settings.watch.paused ? "Paused" : modelData.status)
+                                          + (modelData.pending ? " | " + modelData.pending + " to review" : "")
+                                    textFormat: Text.PlainText
+                                    font.pixelSize: 12
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    ChoiceCheck {
+                                        text: "Watch"; checked: modelData.enabled
+                                        onToggled: settings.backend.enableWatchFolder(modelData.path, checked)
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    ActionButton {
+                                        text: "Review"
+                                        enabled: !settings.watch.busy && !settings.backend.state.busy
+                                        onClicked: {
+                                            settings.close()
+                                            settings.backend.reviewWatchFolder(modelData.path)
+                                        }
+                                    }
+                                    ActionButton {
+                                        text: "Remove"; subtle: true
+                                        onClicked: settings.backend.removeWatchFolder(modelData.path)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    SettingDetail {
+                        visible: !settings.watch.folders.length
+                        text: "No watch folders yet. Add a folder to begin."
+                    }
+                    RowLayout {
+                        ActionButton {
+                            objectName: "checkWatchFoldersButton"
+                            text: settings.watch.busy ? "Checking..." : "Check now"
+                            enabled: !settings.watch.busy && !settings.backend.state.busy
+                            onClicked: settings.backend.checkWatchFolders()
+                        }
+                        ActionButton {
+                            text: settings.watch.paused ? "Resume all" : "Pause all"
+                            onClicked: settings.backend.setWatchOption("paused", !settings.watch.paused)
+                        }
+                    }
+                    SettingDetail {
+                        visible: !!settings.watch.message
+                        text: settings.watch.message
+                        color: Theme.warning
+                    }
+                    SettingDetail {
+                        text: "Identification only. Review matches and use Organize to copy, move, or rename files."
+                        font.pixelSize: 12
                     }
                 }
             }
@@ -235,7 +353,7 @@ ApplicationWindow {
                         Layout.fillWidth: true; spacing: 8
                         ActionButton {
                             objectName: "changeCacheDirectoryButton"
-                            text: settings.cache.moving ? "Moving cacheÃ¢â‚¬Â¦" : "Change folder"
+                            text: settings.cache.moving ? "Moving cache..." : "Change folder"
                             enabled: !settings.backend.state.busy
                             onClicked: settings.backend.chooseCacheDirectory()
                         }

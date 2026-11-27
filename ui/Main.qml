@@ -6,7 +6,7 @@ import "."
 
 ApplicationWindow {
     id: window
-    visible: true
+    visible: !controller.startInTray
     width: 1240; height: 820
     minimumWidth: 1000; minimumHeight: 670
     title: "Sortrr"

@@ -13,6 +13,7 @@ import core
 import related_media
 import updates
 import cache_storage
+import windows_startup
 from watch_folders import WatchFolders
 import window_chrome  # Registers the native folder-window mask for QML.
 from app_paths import FROZEN
@@ -92,6 +93,7 @@ class Controller(QObject):
     darkModeChanged = Signal()
     appearanceChanged = Signal()
     watchChanged = Signal()
+    startupChanged = Signal()
     openSettingsRequested = Signal()
     updateChanged = Signal()
     cacheChanged = Signal()
@@ -154,10 +156,66 @@ class Controller(QObject):
         self.saved_progress = self.read_progress()
         self.tray_handler = None
         self.watch = WatchFolders(core.DATA, self)
+        from PySide6.QtWidgets import QSystemTrayIcon
+        self._start_in_tray = bool(self.watch.config['launch_in_tray'] and self.watch.config['background']
+                                   and QSystemTrayIcon.isSystemTrayAvailable())
+        self.startup_message = ''
         self.watch.changed.connect(self.watchChanged.emit)
         self.watch.notification.connect(lambda path, message: self.toast.emit(message) if self.watch.config['notifications'] else None)
         self.watch.blocked = lambda: self.busy or self.pending is not None or self.closed or self.update_info['status'] in {'checking','downloading','installing'}
         self.watch.exclusions = self.watch_exclusions
+    @Property(bool, constant=True)
+    def startInTray(self):
+        return self._start_in_tray
+
+    @Property('QVariantMap', notify=startupChanged)
+    def startupInfo(self):
+        try:
+            enabled = windows_startup.enabled() if windows_startup.supported() else False
+        except OSError:
+            enabled = False
+        return dict(enabled=enabled, supported=windows_startup.supported(), message=self.startup_message)
+
+    @Slot(bool)
+    def setLaunchInTray(self, enabled):
+        from PySide6.QtWidgets import QSystemTrayIcon
+        if enabled and not QSystemTrayIcon.isSystemTrayAvailable():
+            self.toast.emit('The Windows system tray is unavailable.')
+            return
+        previous = dict(self.watch.config)
+        self.watch.config['launch_in_tray'] = bool(enabled)
+        if enabled:
+            self.watch.config['background'] = True
+        try:
+            self.watch.save()
+        except OSError as exc:
+            self.watch.config = previous
+            self.toast.emit('Could not save startup preference: ' + str(exc))
+        self.watch.changed.emit()
+
+    @Slot(bool)
+    def setStartWithWindows(self, enabled):
+        previous = dict(self.watch.config)
+        try:
+            if enabled:
+                from PySide6.QtWidgets import QSystemTrayIcon
+                if not QSystemTrayIcon.isSystemTrayAvailable():
+                    raise ValueError('The Windows system tray is unavailable.')
+                self.watch.config.update(background=True, launch_in_tray=True)
+                self.watch.save()
+            windows_startup.set_enabled(enabled)
+            self.startup_message = ''
+        except (OSError, ValueError) as exc:
+            self.watch.config = previous
+            try:
+                self.watch.save()
+            except OSError:
+                pass
+            self.startup_message = 'Could not change Windows startup: ' + str(exc)
+            self.toast.emit(self.startup_message)
+        self.watch.changed.emit()
+        self.startupChanged.emit()
+
     def watch_exclusions(self):
         paths = [self.destination, self.reject_folder, str(core.DATA), str(cache_storage.root(core.DATA))]
         for row in self.watch.config['folders']:

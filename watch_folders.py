@@ -89,7 +89,7 @@ class WatchFolders(QObject):
         self.data = Path(data)
         self.config_path = self.data / "watch-folders.json"
         self.state_path = self.data / "watch-index.json"
-        self.config = {"folders": [], "background": False, "notifications": True, "paused": False}
+        self.config = {"folders": [], "background": False, "launch_in_tray": False, "notifications": True, "paused": False}
         self.message = ""
         self.busy = False
         self.closed = threading.Event()
@@ -103,7 +103,7 @@ class WatchFolders(QObject):
             pass
         if not isinstance(self.config.get("folders"), list):
             self.config["folders"] = []
-        for name in ("background", "notifications", "paused"):
+        for name in ("background", "launch_in_tray", "notifications", "paused"):
             self.config[name] = self.config[name] is True
         for row in self.config["folders"]:
             row["enabled"] = row.get("enabled", True) is True
@@ -155,6 +155,8 @@ class WatchFolders(QObject):
         if name not in {"background", "notifications", "paused"}:
             return
         self.config[name] = bool(value)
+        if name == "background" and not value:
+            self.config["launch_in_tray"] = False
         self.save()
         self.changed.emit()
         if name == "paused" and not value:

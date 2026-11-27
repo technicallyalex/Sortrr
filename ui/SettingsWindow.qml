@@ -10,14 +10,15 @@ ApplicationWindow {
     title: "Sortrr Settings"
     flags: Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowSystemMenuHint | Qt.WindowCloseButtonHint
     modality: Qt.WindowModal
-    width: 590
-    height: Math.min(760, Screen.height - 100)
-    minimumWidth: 530
+    width: Math.min(1140, Screen.width - 80)
+    height: Math.min(850, Screen.height - 80)
+    minimumWidth: Math.min(960, Screen.width - 40)
     minimumHeight: Math.min(580, Screen.height - 100)
     color: "transparent"
     font.family: "Segoe UI"
 
     required property var backend
+    readonly property var startup: backend.startupInfo
     readonly property var watch: backend.watchInfo
     readonly property var cache: backend.cacheInfo
     readonly property var update: backend.updateState
@@ -95,12 +96,19 @@ ApplicationWindow {
             Layout.fillWidth: true; Layout.fillHeight: true
             clip: true
             contentWidth: availableWidth
+            contentHeight: settingsGrid.implicitHeight + 40
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-            ColumnLayout {
+            GridLayout {
+                id: settingsGrid
                 width: settingsScroll.availableWidth - 40
                 x: 20; y: 20
-                spacing: 12
-
+                columns: width >= 900 ? 2 : 1
+                columnSpacing: 16; rowSpacing: 16
+                ColumnLayout {
+                    objectName: "applicationSettingsColumn"
+                    Layout.fillWidth: true; Layout.preferredWidth: 1
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 12
             SettingCard {
                 implicitHeight: appearanceRow.implicitHeight + 32
                 RowLayout {
@@ -124,6 +132,147 @@ ApplicationWindow {
             }
 
             SettingCard {
+                objectName: "startupCard"
+                implicitHeight: startupContent.implicitHeight + 32
+                ColumnLayout {
+                    id: startupContent
+                    anchors.fill: parent; anchors.margins: 16; spacing: 8
+                    SettingTitle { text: "Startup & background" }
+                    ChoiceCheck {
+                        objectName: "startWithWindowsOption"
+                        Layout.fillWidth: true
+                        text: "Start Sortrr with Windows"
+                        checked: settings.startup.enabled
+                        enabled: settings.startup.supported && settings.watch.trayAvailable
+                        onToggled: settings.backend.setStartWithWindows(checked)
+                    }
+                    SettingDetail {
+                        text: settings.startup.supported
+                            ? "Runs when you sign in. Enabling this also turns on tray launch."
+                            : "Windows startup is available in the packaged Windows app."
+                        font.pixelSize: 12
+                    }
+                    ChoiceCheck {
+                        objectName: "launchInTrayOption"
+                        Layout.fillWidth: true
+                        text: "Launch directly into the system tray"
+                        checked: settings.watch.launch_in_tray
+                        enabled: settings.watch.trayAvailable
+                        onToggled: settings.backend.setLaunchInTray(checked)
+                    }
+                    SettingDetail {
+                        text: "Starts quietly without opening the window. Click the tray icon or launch Sortrr again to open it."
+                        font.pixelSize: 12
+                    }
+                    ChoiceCheck {
+                        objectName: "backgroundModeOption"
+                        Layout.fillWidth: true
+                        text: "Keep running in the system tray when I close Sortrr"
+                        checked: settings.watch.background
+                        enabled: settings.watch.trayAvailable
+                        onToggled: settings.backend.setWatchOption("background", checked)
+                    }
+                    SettingDetail {
+                        text: settings.watch.trayAvailable
+                            ? "Open, pause, review files, check for updates, or quit from the tray icon."
+                            : "The system tray is unavailable. Sortrr will stay visible."
+                        font.pixelSize: 12
+                    }
+                    SettingDetail {
+                        visible: !!settings.startup.message
+                        text: settings.startup.message
+                        color: Theme.warning
+                    }
+                }
+            }
+
+            SettingCard {
+                implicitHeight: databaseRow.implicitHeight + 32
+                RowLayout {
+                    id: databaseRow
+                    anchors.fill: parent; anchors.margins: 16; spacing: 16
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: 5
+                        SettingTitle { text: "TMDb connection" }
+                        SettingDetail { text: "Look up movie and show titles, posters, and details." }
+                        Label {
+                            text: settings.connected ? "Access token saved" : "Access token needed"
+                            color: settings.connected ? Theme.success : Theme.warning
+                            font.pixelSize: 12; font.weight: Font.DemiBold
+                            padding: 5; leftPadding: 8; rightPadding: 8
+                            background: Rectangle {
+                                radius: 6
+                                color: settings.connected ? Theme.successSoft : Theme.warningSoft
+                            }
+                        }
+                    }
+                    ActionButton {
+                        objectName: "settingsDatabaseButton"
+                        enabled: !settings.backend.state.busy
+                        text: settings.connected ? "Manage token" : "Connect TMDb"
+                        onClicked: {
+                            settings.close()
+                            settings.databaseRequested()
+                        }
+                    }
+                }
+            }
+
+            SettingCard {
+                implicitHeight: updateContent.implicitHeight + 32
+                ColumnLayout {
+                    id: updateContent
+                    anchors.fill: parent; anchors.margins: 16; spacing: 9
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 12
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 4
+                            SettingTitle { text: "App updates" }
+                            SettingDetail { text: "Installed version " + settings.update.current }
+                        }
+                        ActionButton {
+                            objectName: "checkUpdatesButton"
+                            text: settings.update.status === "checking" ? "Checking..." : "Check for updates"
+                            enabled: !settings.backend.state.busy && !settings.updating
+                            onClicked: settings.backend.checkForUpdates()
+                        }
+                    }
+                    SettingDetail {
+                        objectName: "updateStatusText"
+                        text: settings.update.message
+                        color: settings.update.status === "error" ? Theme.warning : Theme.muted
+                    }
+                    ProgressBar {
+                        objectName: "updateDownloadProgress"
+                        Layout.fillWidth: true
+                        visible: settings.update.status === "downloading"
+                        from: 0; to: 1; value: settings.update.progress
+                    }
+                    SettingDetail {
+                        visible: !!settings.update.available && settings.update.canInstall
+                        text: "Sortrr will save your review progress, install the update, and restart."
+                    }
+                    SettingDetail {
+                        visible: !!settings.update.available && !settings.update.canInstall
+                        text: "Open the packaged Windows app to install updates automatically."
+                    }
+                    ActionButton {
+                        objectName: "installUpdateButton"
+                        text: "Install update and restart"
+                        visible: !!settings.update.available && settings.update.canInstall
+                        enabled: !settings.backend.state.busy && !settings.updating
+                        primary: true
+                        onClicked: settings.installUpdateRequested()
+                    }
+                }
+            }
+                }
+                ColumnLayout {
+                    objectName: "mediaSettingsColumn"
+                    Layout.fillWidth: true; Layout.preferredWidth: 1
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 12
+            SettingCard {
                 objectName: "watchFoldersCard"
                 implicitHeight: watchContent.implicitHeight + 32
                 ColumnLayout {
@@ -142,20 +291,6 @@ ApplicationWindow {
                     }
                     SettingDetail {
                         text: "Automatically identify new or changed media in these folders and their subfolders. Files must be unchanged for 60 seconds before scanning."
-                    }
-                    ChoiceCheck {
-                        objectName: "backgroundModeOption"
-                        Layout.fillWidth: true
-                        text: "Keep running in the system tray when I close Sortrr"
-                        checked: settings.watch.background
-                        enabled: settings.watch.trayAvailable
-                        onToggled: settings.backend.setWatchOption("background", checked)
-                    }
-                    SettingDetail {
-                        text: settings.watch.trayAvailable
-                            ? "Open, pause, review files, check for updates, or quit from the tray icon."
-                            : "The system tray is unavailable. Sortrr will stay visible."
-                        font.pixelSize: 12
                     }
                     ChoiceCheck {
                         objectName: "watchNotificationsOption"
@@ -241,87 +376,6 @@ ApplicationWindow {
             }
 
             SettingCard {
-                implicitHeight: databaseRow.implicitHeight + 32
-                RowLayout {
-                    id: databaseRow
-                    anchors.fill: parent; anchors.margins: 16; spacing: 16
-                    ColumnLayout {
-                        Layout.fillWidth: true; spacing: 5
-                        SettingTitle { text: "TMDb connection" }
-                        SettingDetail { text: "Look up movie and show titles, posters, and details." }
-                        Label {
-                            text: settings.connected ? "Access token saved" : "Access token needed"
-                            color: settings.connected ? Theme.success : Theme.warning
-                            font.pixelSize: 12; font.weight: Font.DemiBold
-                            padding: 5; leftPadding: 8; rightPadding: 8
-                            background: Rectangle {
-                                radius: 6
-                                color: settings.connected ? Theme.successSoft : Theme.warningSoft
-                            }
-                        }
-                    }
-                    ActionButton {
-                        objectName: "settingsDatabaseButton"
-                        enabled: !settings.backend.state.busy
-                        text: settings.connected ? "Manage token" : "Connect TMDb"
-                        onClicked: {
-                            settings.close()
-                            settings.databaseRequested()
-                        }
-                    }
-                }
-            }
-
-            SettingCard {
-                implicitHeight: updateContent.implicitHeight + 32
-                ColumnLayout {
-                    id: updateContent
-                    anchors.fill: parent; anchors.margins: 16; spacing: 9
-                    RowLayout {
-                        Layout.fillWidth: true; spacing: 12
-                        ColumnLayout {
-                            Layout.fillWidth: true; spacing: 4
-                            SettingTitle { text: "App updates" }
-                            SettingDetail { text: "Installed version " + settings.update.current }
-                        }
-                        ActionButton {
-                            objectName: "checkUpdatesButton"
-                            text: settings.update.status === "checking" ? "CheckingÃ¢â‚¬Â¦" : "Check for updates"
-                            enabled: !settings.backend.state.busy && !settings.updating
-                            onClicked: settings.backend.checkForUpdates()
-                        }
-                    }
-                    SettingDetail {
-                        objectName: "updateStatusText"
-                        text: settings.update.message
-                        color: settings.update.status === "error" ? Theme.warning : Theme.muted
-                    }
-                    ProgressBar {
-                        objectName: "updateDownloadProgress"
-                        Layout.fillWidth: true
-                        visible: settings.update.status === "downloading"
-                        from: 0; to: 1; value: settings.update.progress
-                    }
-                    SettingDetail {
-                        visible: !!settings.update.available && settings.update.canInstall
-                        text: "Sortrr will save your review progress, install the update, and restart."
-                    }
-                    SettingDetail {
-                        visible: !!settings.update.available && !settings.update.canInstall
-                        text: "Open the packaged Windows app to install updates automatically."
-                    }
-                    ActionButton {
-                        objectName: "installUpdateButton"
-                        text: "Install update and restart"
-                        visible: !!settings.update.available && settings.update.canInstall
-                        enabled: !settings.backend.state.busy && !settings.updating
-                        primary: true
-                        onClicked: settings.installUpdateRequested()
-                    }
-                }
-            }
-
-            SettingCard {
                 implicitHeight: cacheContent.implicitHeight + 32
                 ColumnLayout {
                     id: cacheContent
@@ -382,7 +436,7 @@ ApplicationWindow {
                     }
                 }
             }
-                Item { Layout.preferredHeight: 20 }
+                }
             }
         }
 

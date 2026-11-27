@@ -32,6 +32,7 @@ def main():
         return 0
     controller = Controller()
     app.aboutToQuit.connect(controller.shutdown)
+    app.setQuitOnLastWindowClosed(False)
     engine = create_engine(controller)
     if not engine.rootObjects():
         controller.shutdown()

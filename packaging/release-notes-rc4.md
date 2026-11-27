@@ -2,6 +2,8 @@
 
 Sortrr is still in testing. Try a small set of test files or a backed-up library before moving, renaming, or cleaning up media.
 
+- Opt in to Start with Windows, and launch directly into the system tray. Enabling Windows startup defaults to quiet tray launch; both options remain adjustable.
+- Settings now uses two columns: application/startup controls on the left, watch folders and cache storage on the right.
 - Add multiple watch folders in Settings. Sortrr checks subfolders for new and changed media every 15 seconds, and waits for files to stay unchanged for 60 seconds before identifying them.
 - Keep Sortrr running in the Windows system tray when the window closes. Open it again from the tray or by launching the EXE.
 - Get notifications when watched files are scanned and ready for review. Tray controls include pause/resume, check now, review new files, check for updates, and quit.
@@ -11,6 +13,6 @@ Sortrr is still in testing. Try a small set of test files or a backed-up library
 
 Extract the entire Windows ZIP and launch Sortrr.exe. Keep the adjacent files and folders together. Python and FFmpeg are included.
 
-Validation: 157 automated tests passed, plus isolated watch-folder and tray workflow checks covering two roots, changed files, saved state, review handoff, and relaunching the existing instance.
+Validation: 160 automated tests passed, plus isolated watch-folder and tray workflow checks covering two roots, changed files, saved state, review handoff, and relaunching the existing instance.
 
 This test build is local and has not been published to GitHub.

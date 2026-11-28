@@ -290,7 +290,7 @@ ApplicationWindow {
                         }
                     }
                     SettingDetail {
-                        text: "Automatically identify new or changed media in these folders and their subfolders. Files must be unchanged for 60 seconds before scanning."
+                        text: "Automatically identify new or changed media in these folders and their subfolders. Files must be unchanged for 30 seconds and free of active writers before scanning."
                     }
                     ChoiceCheck {
                         objectName: "watchNotificationsOption"
@@ -322,6 +322,12 @@ ApplicationWindow {
                                     text: !modelData.enabled || settings.watch.paused ? "Paused" : modelData.status
                                     textFormat: Text.PlainText
                                     font.pixelSize: 12
+                                }
+                                SettingDetail {
+                                    visible: modelData.inUse > 0 || modelData.unreadable > 0
+                                    text: (modelData.inUse ? modelData.inUse + " files in use by another app. " : "")
+                                          + (modelData.unreadable ? modelData.unreadable + " files could not be read. " + modelData.blockedReason : "")
+                                    textFormat: Text.PlainText; font.pixelSize: 11; color: Theme.warning
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true

@@ -48,8 +48,31 @@ def inventory(root, excluded=()):
     return found
 
 
+def available_for_read(path):
+    """Briefly open read-only while denying concurrent writers, then release."""
+    if os.name != "nt":
+        with open(path, "rb"):
+            return True
+    import ctypes
+    from ctypes import wintypes
+    api = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = api.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    api.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = create(str(path), 0x80000000, 0x1 | 0x4, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        error = ctypes.get_last_error()
+        if error in (32, 33):
+            return False
+        raise ctypes.WinError(error)
+    api.CloseHandle(handle)
+    return True
+
+
 class StableIndex:
-    def __init__(self, seen=None, quiet_seconds=60):
+    def __init__(self, seen=None, quiet_seconds=30):
         self.seen = dict(seen or {})
         self.observed = {}
         self.quiet_seconds = quiet_seconds
@@ -64,7 +87,7 @@ class StableIndex:
             if previous is None or previous[0] != signature:
                 self.observed[path] = (signature, now)
                 continue
-            if now - previous[1] >= self.quiet_seconds and wall_time - signature[1] / 1e9 >= self.quiet_seconds:
+            if now - previous[1] >= self.quiet_seconds:
                 ready.append(path)
         # Each root is reconciled separately. Retain stability timers for
         # other roots rather than restarting them on every polling pass.
@@ -142,6 +165,9 @@ class WatchFolders(QObject):
         return dict(self.config, busy=self.busy, message=self.message, folders=[
             dict(row, status=self.statuses.get(row["path"],
                  "Watching" if row.get("enabled", True) else "Paused"),
+                 inUse=self.activity.get(row["path"], {}).get("inUse", 0),
+                 unreadable=self.activity.get(row["path"], {}).get("unreadable", 0),
+                 blockedReason=self.activity.get(row["path"], {}).get("blockedReason", ""),
                  **folder_counts(row.get("pending_files", []), self.activity.get(row["path"], {})))
                  for row in self.config["folders"]])
 
@@ -213,6 +239,8 @@ class WatchFolders(QObject):
         self.changed.emit()
         def job():
             result = []
+            prepared = []
+            # Reconcile every root before database lookups can occupy the worker.
             for row in folders:
                 if self.closed.is_set():
                     break
@@ -221,14 +249,32 @@ class WatchFolders(QObject):
                     self.progress.emit(root, "Checking for new or changed media...")
                     snapshot = inventory(root, exclusions)
                     ready = self.index.ready(snapshot, time.monotonic(), time.time(), scope=root)
+                    unprocessed = frozenset(p for p, sig in snapshot.items() if self.index.seen.get(p) != sig)
+                    status = "Files queued for scanning" if ready else "Waiting for files to settle" if unprocessed else "Watching"
+                    self.progress.emit(root, dict(status=status, waiting=len(unprocessed)-len(ready),
+                        queued=len(ready), scanning=0, completed=(), unprocessed=unprocessed,
+                        present=frozenset(snapshot)))
+                    prepared.append((row, snapshot, ready))
+                except OSError as exc:
+                    status = "Could not check folder: " + str(exc)
+                    self.progress.emit(root, dict(status=status, waiting=0, queued=0, scanning=0))
+                    result.append((root, [], status))
+            for row, snapshot, ready in prepared:
+                if self.closed.is_set():
+                    break
+                root = row["path"]
+                try:
                     paths = ready[:32]
                     unprocessed = frozenset(p for p, sig in snapshot.items() if self.index.seen.get(p) != sig)
                     present = frozenset(snapshot)
                     waiting = len(unprocessed) - len(ready)
                     active, started, completed = set(), set(), set()
+                    blocked, in_use, unreadable = set(), set(), {}
                     def publish(status):
                         self.progress.emit(root, dict(status=status, waiting=waiting,
-                            queued=len(ready) - len(started), scanning=len(active),
+                            queued=len(ready) - len(started) - len(blocked), scanning=len(active),
+                            inUse=len(in_use), unreadable=len(unreadable),
+                            blockedReason=next(iter(unreadable.values()), ''),
                             completed=tuple(completed), unprocessed=unprocessed, present=present))
                     if not paths:
                         status = "Waiting for files to settle" if waiting else "Watching"
@@ -238,10 +284,23 @@ class WatchFolders(QObject):
                     media = []
                     for path in paths:
                         try:
-                            media.append(core.parse(Path(path)))
-                        except OSError:
-                            pass
-                    publish("Scanning new or updated files")
+                            candidate = core.parse(Path(path))
+                            if list(candidate.signature) != snapshot[path]:
+                                blocked.add(path)
+                                waiting += 1
+                            elif not available_for_read(path):
+                                blocked.add(path)
+                                in_use.add(path)
+                                waiting += 1
+                            else:
+                                media.append(candidate)
+                        except OSError as exc:
+                            blocked.add(path)
+                            unreadable[path] = str(exc)
+                            waiting += 1
+                    publish("Scanning new or updated files" if media else
+                            "Files are in use by another app" if in_use else
+                            "Some files could not be read" if unreadable else "Waiting for files to settle")
                     lock = threading.Lock()
                     def began(uid):
                         with lock:
@@ -292,8 +351,10 @@ class WatchFolders(QObject):
                     unprocessed = unprocessed.difference(accepted)
                     completed.intersection_update(accepted)
                     active.clear()
-                    status = ("Waiting for files to settle" if waiting else
-                              "Files queued for scanning" if len(ready) > len(started) else "Watching")
+                    status = ("Files queued for scanning" if len(ready) > len(started) + len(blocked) else
+                              "Some files could not be read" if unreadable else
+                              "Files are in use by another app" if in_use else
+                              "Waiting for files to settle" if waiting else "Watching")
                     publish(status)
                     result.append((root, accepted, status))
                 except Exception as exc:

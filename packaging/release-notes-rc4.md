@@ -4,8 +4,9 @@ Sortrr is still in testing. Try a small set of test files or a backed-up library
 
 - Opt in to Start with Windows, and launch directly into the system tray. Enabling Windows startup defaults to quiet tray launch; both options remain adjustable.
 - Settings now uses two columns: application/startup controls on the left, watch folders and cache storage on the right.
+- Readiness uses observed size and modification-time stability, without relying on the NAS clock. A read-only writer-sharing check distinguishes files in use or unreadable files from settling files. All folders are reconciled before database scanning so queued work is not mislabeled as settling.
 - Watch-folder rows show separate Waiting, Queued, Scanning, and Ready to review counts, updated as individual files finish. The settling message now reads "Waiting for files to settle".
-- Add multiple watch folders in Settings. Sortrr checks subfolders for new and changed media every 15 seconds, and waits for files to stay unchanged for 60 seconds before identifying them.
+- Add multiple watch folders in Settings. Sortrr checks subfolders for new and changed media every 15 seconds, and waits for files to stay unchanged for 30 seconds before identifying them.
 - Keep Sortrr running in the Windows system tray when the window closes. Open it again from the tray or by launching the EXE.
 - Get notifications when watched files are scanned and ready for review. Tray controls include pause/resume, check now, review new files, check for updates, and quit.
 - Preserve the active review while background scans run. Use Review on a watched folder to load its files with remembered matches.
@@ -14,6 +15,6 @@ Sortrr is still in testing. Try a small set of test files or a backed-up library
 
 Extract the entire Windows ZIP and launch Sortrr.exe. Keep the adjacent files and folders together. Python and FFmpeg are included.
 
-Validation: 163 automated tests passed, plus isolated watch-folder and tray workflow checks covering two roots, changed files, saved state, review handoff, and relaunching the existing instance.
+Validation: 167 automated tests passed, plus isolated watch-folder and tray workflow checks covering two roots, changed files, saved state, review handoff, and relaunching the existing instance.
 
 This test build is local and has not been published to GitHub.

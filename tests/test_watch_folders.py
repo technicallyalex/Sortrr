@@ -2,18 +2,25 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from watch_folders import StableIndex, inventory, atomic_json, folder_counts
+from watch_folders import StableIndex, inventory, atomic_json, folder_counts, available_for_read
 import json
 
 
 class WatchIndexTests(unittest.TestCase):
-    def test_files_must_be_unchanged_and_old_enough(self):
+    def test_files_must_be_observed_unchanged(self):
         index = StableIndex(quiet_seconds=60)
         snapshot = {"movie.mp4": [100, 1000_000_000_000]}
         self.assertEqual(index.ready(snapshot, 0, 1000), [])
         self.assertEqual(index.ready(snapshot, 59, 1100), [])
-        self.assertEqual(index.ready(snapshot, 60, 1050), [])
+        self.assertEqual(index.ready(snapshot, 60, 1050), ["movie.mp4"])
         self.assertEqual(index.ready(snapshot, 61, 1061), ["movie.mp4"])
+
+    def test_future_nas_timestamps_and_clock_rollback_do_not_block_ready_files(self):
+        index = StableIndex(quiet_seconds=30)
+        snapshot = {"movie.mp4": [100, 999999999999999999]}
+        self.assertEqual(index.ready(snapshot, 0, 1000), [])
+        self.assertEqual(index.ready(snapshot, 15, 900), [])
+        self.assertEqual(index.ready(snapshot, 30, 800), ["movie.mp4"])
 
     def test_growing_file_restarts_the_quiet_period(self):
         index = StableIndex(quiet_seconds=10)
@@ -93,3 +100,27 @@ class WatchCountTests(unittest.TestCase):
         counts = folder_counts(["one", "two"], {})
         self.assertEqual(counts["readyToReview"], 2)
         self.assertEqual((counts["waiting"], counts["queued"], counts["scanning"]), (0, 0, 0))
+
+
+class WatchReadProbeTests(unittest.TestCase):
+    def test_missing_file_is_reported(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(OSError):
+                available_for_read(Path(folder)/"missing.mp4")
+
+    @unittest.skipUnless(os.name == "nt", "Windows share-mode semantics")
+    def test_active_writer_blocks_until_its_handle_is_closed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/"copy.mp4"
+            path.write_bytes(b"example")
+            with path.open("r+b"):
+                self.assertFalse(available_for_read(path))
+            self.assertTrue(available_for_read(path))
+
+    @unittest.skipUnless(os.name == "nt", "Windows share-mode semantics")
+    def test_readers_do_not_block_identification(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/"read.mp4"
+            path.write_bytes(b"example")
+            with path.open("rb"):
+                self.assertTrue(available_for_read(path))
